@@ -741,25 +741,25 @@ app.get('/iredo/detail', async (req, res) => {
 // --- 16. ENDPOINT PRO IDSOK (CORS Proxy) ---
 app.get('/idsok', async (req, res) => {
     try {
-        const targetUrl = 'https://cestujok.cz/idspublicservices/api/service/position'; 
-    
-        const response = await fetch(targetUrl, {
+        const targetUrl = 'https://cestujok.cz/idspublicservices/api/service/position';
+        
+        // Použití corsproxy.io jako prostředníka
+        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+
+        const response = await fetch(proxyUrl, {
             method: 'GET',
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'application/json, text/plain, */*',
-                'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8',
-                'Cache-Control': 'no-cache',
-                'Referer': 'https://www.idsok.cz/' 
+                'Accept': 'application/json, text/plain, */*'
             }
         });
 
-        if (!response.ok) throw new Error(`Chyba IDSOK: ${response.status}`);
+        if (!response.ok) throw new Error(`Chyba IDSOK Proxy: ${response.status}`);
         
         const data = await response.json();
         res.json(data);
     } catch (err) {
-        console.error("Detailní chyba IDSOK:", err); // Vyhodí to přesný důvod selhání do logu
+        console.error("Detailní chyba IDSOK:", err.message);
         res.status(500).json({ error: err.message, stack: err.stack });
     }
 });
