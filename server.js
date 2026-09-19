@@ -743,8 +743,8 @@ app.get('/idsok', async (req, res) => {
     try {
         const targetUrl = 'https://cestujok.cz/idspublicservices/api/service/position';
         
-        // Změna z AllOrigins na corsproxy.io
-        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+        // Zkusíme méně známou thingproxy
+        const proxyUrl = `https://thingproxy.freeboard.io/fetch/${targetUrl}`;
 
         const response = await fetch(proxyUrl, {
             headers: {
@@ -752,10 +752,10 @@ app.get('/idsok', async (req, res) => {
             }
         });
 
-        if (!response.ok) throw new Error(`Chyba proxy: ${response.status}`);
+        if (!response.ok) throw new Error(`Chyba thingproxy: ${response.status}`);
         
         const data = await response.json();
-        res.json(data); // Tady nemusíš dělat žádné JSON.parse(data.contents), vrací to rovnou JSON!
+        res.json(data);
     } catch (err) {
         console.error("Chyba IDSOK:", err.message);
         res.status(500).json({ error: err.message });
