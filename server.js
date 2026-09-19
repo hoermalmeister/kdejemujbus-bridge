@@ -742,23 +742,23 @@ app.get('/iredo/detail', async (req, res) => {
 app.get('/idsok', async (req, res) => {
     try {
         const targetUrl = 'https://cestujok.cz/idspublicservices/api/service/position';
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+        
+        // Změna z AllOrigins na corsproxy.io
+        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
 
         const response = await fetch(proxyUrl, {
-            method: 'GET',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'application/json, text/plain, */*'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0'
             }
         });
 
-        if (!response.ok) throw new Error(`Chyba IDSOK Proxy: ${response.status}`);
+        if (!response.ok) throw new Error(`Chyba proxy: ${response.status}`);
         
         const data = await response.json();
-        res.json(data);
+        res.json(data); // Tady nemusíš dělat žádné JSON.parse(data.contents), vrací to rovnou JSON!
     } catch (err) {
-        console.error("Detailní chyba IDSOK:", err.message);
-        res.status(500).json({ error: err.message, stack: err.stack });
+        console.error("Chyba IDSOK:", err.message);
+        res.status(500).json({ error: err.message });
     }
 });
 
