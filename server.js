@@ -742,9 +742,7 @@ app.get('/iredo/detail', async (req, res) => {
 app.get('/idsok', async (req, res) => {
     try {
         const targetUrl = 'https://cestujok.cz/idspublicservices/api/service/position';
-        
-        // Použití corsproxy.io jako prostředníka
-        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
 
         const response = await fetch(proxyUrl, {
             method: 'GET',
