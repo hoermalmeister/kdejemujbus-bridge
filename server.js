@@ -807,43 +807,44 @@ app.get('/duk/detail', async (req, res) => {
 });
 
 // --- 20. PROXY PRO DÚK TRASY (Geometrie linky) ---
-    async getRouteInfo(globalId, attributes, details) {
-        if (!attributes || !attributes.cisjrRun) return null;
-        const routeId = attributes.cisjrLine; 
-        const tripId = attributes.cisjrRun;
+    app.post('/duk/route', async (req, res) => {
+    try {
+        const { line_displayed, trip } = req.body;
 
-        if (!routeId || !tripId) return null;
-
-        try {
-            const targetUrl = 'https://grapp-bridge-production.up.railway.app/duk/route';
-
-            const response = await fetch(targetUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    line_displayed: String(routeId),
-                    trip: parseInt(tripId, 10)
-                })
-            });
-            if (!response.ok) {
-                console.warn(`Nepodařilo se stáhnout trasu DÚK (${routeId}/${tripId}): ${response.status}`);
-                return null;
-            }
-            const rawRoute = await response.json();
-            
-            if (!Array.isArray(rawRoute) || rawRoute.length === 0) return null;
-            
-            // MapLibre čeká [lng, lat]
-            const maplibCoordinates = rawRoute.map(point => [point.lng, point.lat]);
-            
-            return maplibCoordinates;
-            } catch (error) {
-            console.error("Chyba při stahování trasy z DÚK Můstku:", error);
-            return null;
+        if (!line_displayed || !trip) {
+            return res.status(400).json({ error: "Chybí parametry line_displayed nebo trip." });
         }
+
+        const targetUrl = 'https://dukfinder.sap1k.cz/api/GetTripGeometry';
+
+        const response = await fetch(targetUrl, {
+            method: 'POST',
+            headers: {
+                'accept': '*/*',
+                'content-type': 'application/json',
+                'cache-control': 'no-cache',
+                // Těmito hlavičkami předstíráme, že jsme originální web Dukfinderu
+                'origin': 'https://dukfinder.sap1k.cz',
+                'referer': 'https://dukfinder.sap1k.cz/mapa',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            },
+            body: JSON.stringify({
+                line_displayed: String(line_displayed),
+                trip: parseInt(trip, 10)
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Dukfinder API vrátilo chybu: ${response.status}`);
+        }
+
+        const data = await response.json();
+        res.json(data);
+    } catch (err) {
+        console.error("Chyba při stahování trasy DÚK přes proxy:", err.message);
+        res.status(500).json({ error: err.message });
     }
+});
 
 // --- 21. IDPK Můstek ---
 // --- GLOBÁLNÍ PAMĚŤ A CACHE PRO IDPK ---
