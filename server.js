@@ -827,22 +827,19 @@ app.get('/duk/detail', async (req, res) => {
                     trip: parseInt(tripId, 10)
                 })
             });
-
             if (!response.ok) {
                 console.warn(`Nepodařilo se stáhnout trasu DÚK (${routeId}/${tripId}): ${response.status}`);
                 return null;
             }
-
             const rawRoute = await response.json();
             
             if (!Array.isArray(rawRoute) || rawRoute.length === 0) return null;
-
+            
             // MapLibre čeká [lng, lat]
             const maplibCoordinates = rawRoute.map(point => [point.lng, point.lat]);
             
             return maplibCoordinates;
-
-        } catch (error) {
+            } catch (error) {
             console.error("Chyba při stahování trasy z DÚK Můstku:", error);
             return null;
         }
