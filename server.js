@@ -738,45 +738,6 @@ app.get('/iredo/detail', async (req, res) => {
     }
 });
 
-// --- 16. ENDPOINT PRO IDSOK (CORS Proxy) ---
-app.get('/idsok', async (req, res) => {
-    try {
-        const targetUrl = 'https://cestujok.cz/idspublicservices/api/service/position';
-        
-        const response = await axios.get(targetUrl, {
-            timeout: 10000 // 10 vteřin limit
-        });
-        
-        res.json(response.data); // axios už vrací rovnou JSON v 'data'
-    } catch (err) {
-        console.error("Chyba IDSOK axios:", err.message);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// --- 17. ENDPOINT PRO IDSOK DETAIL (CORS Proxy) ---
-app.get('/idsok/detail', async (req, res) => {
-    try {
-        const { id } = req.query;
-        if (!id) return res.status(400).json({ error: "Chybí ID spoje" });
-
-        const response = await fetch(`https://cestujok.cz/idspublicservices/api/servicedetail?id=${id}`, {
-            method: 'GET',
-            headers: {
-                'accept': 'application/json, text/plain, */*',
-                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
-
-        if (!response.ok) throw new Error(`IDSOK Detail API chyba: ${response.status}`);
-        const data = await response.json();
-        res.json(data);
-    } catch (error) {
-        console.error("Chyba při stahování IDSOK detailu:", error.message);
-        res.status(500).json({ error: "Chyba API" });
-    }
-});
-
 // --- 18. ENDPOINT PRO DÚK (CORS Proxy) ---
 app.get('/duk', async (req, res) => {
     try {
