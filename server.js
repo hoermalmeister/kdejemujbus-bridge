@@ -743,23 +743,13 @@ app.get('/idsok', async (req, res) => {
     try {
         const targetUrl = 'https://cestujok.cz/idspublicservices/api/service/position';
         
-        // Dotaz NAPŘÍMO, ale s totálně ořezanými hlavičkami
-        const response = await fetch(targetUrl, {
-            method: 'GET',
-            headers: {
-                // Posíláme JEN TO NEJNUTNĚJŠÍ
-                'Accept': 'application/json'
-            },
-            // Vynutíme starší, ale stabilnější keep-alive
-            keepalive: true 
+        const response = await axios.get(targetUrl, {
+            timeout: 10000 // 10 vteřin limit
         });
-
-        if (!response.ok) throw new Error(`Chyba IDSOK: ${response.status}`);
         
-        const data = await response.json();
-        res.json(data);
+        res.json(response.data); // axios už vrací rovnou JSON v 'data'
     } catch (err) {
-        console.error("Chyba IDSOK napřímo:", err.message);
+        console.error("Chyba IDSOK axios:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
