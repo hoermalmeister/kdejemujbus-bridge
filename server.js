@@ -743,21 +743,23 @@ app.get('/idsok', async (req, res) => {
     try {
         const targetUrl = 'https://cestujok.cz/idspublicservices/api/service/position';
         
-        // Zkusíme méně známou thingproxy
-        const proxyUrl = `https://thingproxy.freeboard.io/fetch/${targetUrl}`;
-
-        const response = await fetch(proxyUrl, {
+        // Dotaz NAPŘÍMO, ale s totálně ořezanými hlavičkami
+        const response = await fetch(targetUrl, {
+            method: 'GET',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0'
-            }
+                // Posíláme JEN TO NEJNUTNĚJŠÍ
+                'Accept': 'application/json'
+            },
+            // Vynutíme starší, ale stabilnější keep-alive
+            keepalive: true 
         });
 
-        if (!response.ok) throw new Error(`Chyba thingproxy: ${response.status}`);
+        if (!response.ok) throw new Error(`Chyba IDSOK: ${response.status}`);
         
         const data = await response.json();
         res.json(data);
     } catch (err) {
-        console.error("Chyba IDSOK:", err.message);
+        console.error("Chyba IDSOK napřímo:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
