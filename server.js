@@ -805,6 +805,46 @@ app.get('/duk/detail', async (req, res) => {
     }
 });
 
+// --- 20. PROXY PRO DÚK TRASY (Geometrie linky) ---
+app.post('/duk/route', async (req, res) => {
+    try {
+        const { line_displayed, trip } = req.body;
+
+        if (!line_displayed || !trip) {
+            return res.status(400).json({ error: "Chybí parametry line_displayed nebo trip." });
+        }
+
+        const targetUrl = 'https://dukfinder.sap1k.cz/api/GetTripGeometry';
+
+        const response = await fetch(targetUrl, {
+            method: 'POST',
+            headers: {
+                'accept': '*/*',
+                'content-type': 'application/json',
+                'cache-control': 'no-cache',
+                // Těmito hlavičkami předstíráme, že jsme originální web Dukfinderu
+                'origin': 'https://dukfinder.sap1k.cz',
+                'referer': 'https://dukfinder.sap1k.cz/mapa',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            },
+            body: JSON.stringify({
+                line_displayed: String(line_displayed),
+                trip: parseInt(trip, 10)
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Dukfinder API vrátilo chybu: ${response.status}`);
+        }
+
+        const data = await response.json();
+        res.json(data);
+    } catch (err) {
+        console.error("Chyba při stahování trasy DÚK přes proxy:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- 21. IDPK Můstek ---
 // --- GLOBÁLNÍ PAMĚŤ A CACHE PRO IDPK ---
 const idpkHistory = new Map();
