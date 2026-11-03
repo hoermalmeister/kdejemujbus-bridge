@@ -6,6 +6,7 @@ import { createPositionCache } from './lib/positionCache.js';
 import { jtskToWgs84 } from './lib/krovak.js';
 import { getPmdpVehicles, getPmdpTrip } from './lib/pmdpStream.js';
 import { getTshbVehicles } from './lib/tshbStream.js';
+import { parseDpmdVehicles } from './lib/dpmdParser.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
 const UPSTREAM_TIMEOUT_MS = 10_000;
@@ -1080,6 +1081,15 @@ app.get('/pmdp/trip', async (req, res) => {
 
 // --- 25. TSHB (MHD Havlíčkův Brod) ---
 app.get('/tshb', positionRoute('/tshb', getTshbVehicles));
+
+// --- 26. DPMD (Děčín) ---
+app.get('/dpmd', positionRoute('/dpmd', async () => {
+    const response = await fetch(`https://tabla.dpmdas.cz/data/TrafficState.js?v=${Date.now()}`, {
+        headers: { 'origin': 'https://doprava.dpmdas.cz', 'referer': 'https://doprava.dpmdas.cz/' }
+    });
+    if (!response.ok) throw new Error(`DPMD chyba: ${response.status}`);
+    return parseDpmdVehicles(await response.text());
+}));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
