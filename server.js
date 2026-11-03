@@ -3,6 +3,7 @@ import cors from 'cors';
 import compression from 'compression';
 import fs from 'fs';
 import { createPositionCache } from './lib/positionCache.js';
+import { jtskToWgs84 } from './lib/krovak.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
 const UPSTREAM_TIMEOUT_MS = 10_000;
@@ -939,6 +940,127 @@ for (const portal of MPV_PORTALS) {
         }
     });
 }
+
+// --- 23. IDOK (Dopravní portál Karlovy Vary) ---
+const IDOK_URL = 'https://dopravniportal.dpkv.cz/dic';
+const IDOK_EXTENT = { xmin: -900000, xmax: -790000, ymin: -1060000, ymax: -960000 };
+const IDOK_LINE_LAYERS = ['Denni linky polyline', 'Nocni linky polyline', 'Zvlastni linky polyline', 'Primestske linky polyline'];
+const IDOK_ROUTES_TTL_MS = 6 * 60 * 60 * 1000;
+const IDOK_HEADERS = {
+    'accept': 'application/json, text/javascript, */*; q=0.01',
+    'x-requested-with': 'XMLHttpRequest',
+    'origin': 'https://dopravniportal.dpkv.cz',
+    'referer': `${IDOK_URL}/`,
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+};
+
+async function fetchIdokLayers(layers) {
+    const response = await fetch(`${IDOK_URL}/FeatureService/GetFeatures`, {
+        method: 'POST',
+        headers: { ...IDOK_HEADERS, 'content-type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify({
+            scale: 40000,
+            resolution: 10.583354500042335,
+            extent: IDOK_EXTENT,
+            layerFilterList: layers.map(id => ({ id }))
+        })
+    });
+    if (!response.ok) throw new Error(`IDOK chyba: ${response.status}`);
+    const data = await response.json();
+    return (data.layers || []).flatMap(layer => layer.featureList || []);
+}
+
+function decodeIdokIntegers(encoded) {
+    const values = [];
+    let index = 0;
+    while (index < encoded.length) {
+        let shift = 0, result = 0, byte;
+        do {
+            byte = encoded.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+        } while (byte >= 0x20);
+        values.push(result & 1 ? ~(result >> 1) : result >> 1);
+    }
+    return values;
+}
+
+// "g" je "<délky úseků> <body>". Obojí je kódované jako polyline, body jsou S-JTSK v decimetrech.
+function decodeIdokGeometry(geometry) {
+    const [lengthsPart, pointsPart] = String(geometry).split(' ');
+    if (!pointsPart) return [];
+    const values = decodeIdokIntegers(pointsPart);
+    const points = [];
+    let x = 0, y = 0;
+    for (let i = 0; i + 1 < values.length; i += 2) {
+        x += values[i];
+        y += values[i + 1];
+        points.push(jtskToWgs84(x / 10, y / 10).map(value => Number(value.toFixed(6))));
+    }
+    const lines = [];
+    let start = 0;
+    for (const length of decodeIdokIntegers(lengthsPart)) {
+        const line = points.slice(start, start + length);
+        if (line.length >= 2) lines.push(line);
+        start += length;
+    }
+    return lines;
+}
+
+app.get('/idok', positionRoute('/idok', async () => {
+    const features = await fetchIdokLayers(['RT spoje point']);
+    return features.map(feature => {
+        const [lng, lat] = jtskToWgs84(feature.x, feature.y);
+        const angle = /rotate\((-?[\d.]+)deg\)/.exec(feature.html || '');
+        const label = /rtconn-text[^>]*>([^<]*)</.exec(feature.html || '');
+        return {
+            id: feature.id,
+            lat: Number(lat.toFixed(6)),
+            lng: Number(lng.toFixed(6)),
+            heading: angle ? Number(angle[1]) : null,
+            label: label ? label[1].trim() : null
+        };
+    });
+}));
+
+app.get('/idok/detail', async (req, res) => {
+    try {
+        const { id } = req.query;
+        if (!/^\w+_\d+$/.test(String(id || ''))) return res.status(400).send('');
+        const context = encodeURIComponent(JSON.stringify({ id }));
+        const response = await fetch(`${IDOK_URL}/Map/RTConnTooltip?context=${context}`, { headers: IDOK_HEADERS });
+        if (!response.ok) throw new Error(`IDOK detail chyba: ${response.status}`);
+        res.send(await response.text());
+    } catch (error) {
+        console.error("Chyba detailu IDOK:", error.message);
+        res.status(500).send('');
+    }
+});
+
+// Trasy linek se mění málokdy, proto je držíme několik hodin
+let idokRoutes = { lines: new Map(), loadedAt: 0, request: null };
+
+async function getIdokRoutes() {
+    if (Date.now() - idokRoutes.loadedAt < IDOK_ROUTES_TTL_MS) return idokRoutes.lines;
+    idokRoutes.request ??= fetchIdokLayers(IDOK_LINE_LAYERS)
+        .then(features => {
+            idokRoutes.lines = new Map(features.map(feature => [String(feature.id), feature.g]));
+            idokRoutes.loadedAt = Date.now();
+            return idokRoutes.lines;
+        })
+        .finally(() => { idokRoutes.request = null; });
+    return idokRoutes.request;
+}
+
+app.get('/idok/route', async (req, res) => {
+    try {
+        const geometry = (await getIdokRoutes()).get(String(req.query.line));
+        res.json({ lines: geometry ? decodeIdokGeometry(geometry) : null });
+    } catch (error) {
+        console.error("Chyba trasy IDOK:", error.message);
+        res.status(500).json({ lines: null });
+    }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
