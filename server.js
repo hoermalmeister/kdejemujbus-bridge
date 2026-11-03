@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
 import fs from 'fs';
-import { openSegmentStore } from './lib/vdvSegments.js';
 import { createPositionCache } from './lib/positionCache.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
@@ -604,60 +603,6 @@ app.get('/vdv/timetable', async (req, res) => {
     } catch (err) {
         console.error("Chyba VDV Timetable:", err.message);
         res.status(500).send("Chyba při stahování VDV JŘ");
-    }
-});
-
-// Spoje držíme v paměti, souřadnice segmentů se čtou z disku až při dotazu na trasu
-let vdvTrips = {};
-let vdvSegmentStore = Promise.resolve(null);
-try {
-    if (fs.existsSync('./data/vdv_segments.json') && fs.existsSync('./data/vdv_trips.json')) {
-        vdvTrips = JSON.parse(fs.readFileSync('./data/vdv_trips.json', 'utf8'));
-        vdvSegmentStore = openSegmentStore('./data/vdv_segments.json');
-        vdvSegmentStore
-            .then(store => console.log(`VDV Trasy načteny: ${Object.keys(vdvTrips).length} spojů, ${store.size} segmentů.`))
-            .catch(e => console.warn("Upozornění: VDV segmenty se nepodařilo zaindexovat.", e.message));
-    }
-} catch (e) {
-    console.warn("Upozornění: VDV segmenty zatím neexistují.");
-}
-
-// --- 13. ENDPOINT PRO VDV (Kreslení trasy pomocí spojování segmentů) ---
-app.get('/vdv/route', async (req, res) => {
-    try {
-        const { id } = req.query; // Přijde např. "841129_25"
-        
-        // Získáme pole identifikátorů segmentů: ["stopA|stopB", "stopB|stopC", ...]
-        const tripSegments = vdvTrips[id];
-        const store = await vdvSegmentStore;
-        
-        if (!store || !tripSegments || tripSegments.length === 0) {
-            return res.json({ shape: null });
-        }
-
-        const fullShape = [];
-        
-        // Jako Lego dílky spojíme souřadnice všech segmentů
-        for (const segKey of tripSegments) {
-            const coords = await store.get(segKey);
-            if (coords && coords.length > 0) {
-                // Abychom neměli zduplikované body na zlomech zastávek,
-                // přeskočíme první bod segmentu (pokud už ve fullShape něco je)
-                const startIdx = fullShape.length > 0 ? 1 : 0;
-                for (let i = startIdx; i < coords.length; i++) {
-                    fullShape.push(coords[i]);
-                }
-            }
-        }
-
-        if (fullShape.length < 2) {
-            return res.json({ shape: null });
-        }
-
-        res.json({ shape: fullShape });
-    } catch (error) {
-        console.error("Chyba při skládání VDV trasy:", error.message);
-        res.json({ shape: null });
     }
 });
 
