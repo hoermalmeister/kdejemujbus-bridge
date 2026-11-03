@@ -870,6 +870,71 @@ app.get('/idpk/timetable', async (req, res) => {
     }
 });
 
+// --- 22. ZDROJE NA MPVNET (ODIS, IDZK, IDOL, IDESKA) ---
+// Všechny portály mají stejné rozhraní, liší se jen názvem v adrese
+const MPV_PORTALS = ['odis', 'zlin', 'idol', 'jikord'];
+const MPV_BOUNDS = { w: 11.5, s: 48.3, e: 19.2, n: 51.4, zoom: 12, showStops: false, mapFilterId: null };
+const MPV_TRAIN_CATEGORY = 1;
+
+async function postMpv(portal, path, body) {
+    return fetch(`https://mpvnet.cz/${portal}/${path}`, {
+        method: 'POST',
+        headers: {
+            'accept': 'application/json, text/javascript, */*; q=0.01',
+            'content-type': 'application/json; charset=UTF-8',
+            'x-requested-with': 'XMLHttpRequest',
+            'origin': 'https://mpvnet.cz',
+            'referer': `https://mpvnet.cz/${portal}/map`,
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        body: JSON.stringify(body)
+    });
+}
+
+function readMpvTrip(req) {
+    const { num1, num2, cat } = req.query;
+    return num1 && num2 && cat !== undefined ? { num1: String(num1), num2: String(num2), cat: String(cat) } : null;
+}
+
+for (const portal of MPV_PORTALS) {
+    app.get(`/mpv/${portal}`, positionRoute(`/mpv/${portal}`, async () => {
+        const response = await postMpv(portal, 'map/mapData', MPV_BOUNDS);
+        if (!response.ok) throw new Error(`MPV ${portal} chyba: ${response.status}`);
+        const data = await response.json();
+        // Posíláme jen autobusy a jen údaje, které frontend používá
+        return (data.transmitters || [])
+            .filter(v => v.cat !== MPV_TRAIN_CATEGORY && String(v.cn || '').includes('|'))
+            .map(({ x, y, ico, dm, cr, cn, cat }) => ({ x, y, ico, dm, cr, cat, cn }));
+    }));
+
+    app.get(`/mpv/${portal}/route`, async (req, res) => {
+        try {
+            const trip = readMpvTrip(req);
+            if (!trip) return res.status(400).json({ shape: null });
+            const response = await postMpv(portal, 'map/getRoute', { ...trip, carrier: 0, cat: Number(trip.cat), trajectory: true });
+            if (!response.ok) throw new Error(`MPV trasa chyba: ${response.status}`);
+            const data = await response.json();
+            res.json({ shape: (data.routeStops || []).map(point => [point.y, point.x]) });
+        } catch (error) {
+            console.error(`Chyba trasy MPV ${portal}:`, error.message);
+            res.status(500).json({ shape: null });
+        }
+    });
+
+    app.get(`/mpv/${portal}/timetable`, async (req, res) => {
+        try {
+            const trip = readMpvTrip(req);
+            if (!trip) return res.status(400).send('');
+            const response = await postMpv(portal, 'mapapi/timetable', trip);
+            if (!response.ok) throw new Error(`MPV JŘ chyba: ${response.status}`);
+            res.send(await response.text());
+        } catch (error) {
+            console.error(`Chyba JŘ MPV ${portal}:`, error.message);
+            res.status(500).send('');
+        }
+    });
+}
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
     console.log(`GRAPP Můstek naslouchá na portu ${PORT}`);
