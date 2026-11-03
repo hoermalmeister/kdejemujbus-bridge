@@ -726,6 +726,34 @@ app.get('/duk/detail', async (req, res) => {
     }
 });
 
+// --- 19B. ENDPOINT PRO STOPU VOZIDLA DÚK (projetá trasa a plán před vozidlem) ---
+app.get('/duk/trace', async (req, res) => {
+    try {
+        const id = parseInt(req.query.id, 10);
+        if (!id) return res.status(400).json({ error: "Chybí ID vozu" });
+
+        const response = await fetch('https://provoz.kr-ustecky.cz/TMD/API/Map/GetVhcTraceMarkers', {
+            method: 'POST',
+            headers: {
+                'accept': 'application/json, text/javascript, */*; q=0.01',
+                'content-type': 'application/json; charset=UTF-8',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'x-requested-with': 'XMLHttpRequest',
+                'origin': 'https://provoz.kr-ustecky.cz',
+                'referer': 'https://provoz.kr-ustecky.cz/TMD',
+                'cookie': 'MapPref_0={"AutoDetectLocation":false}; ASP.NET_SessionId=dummy123456789'
+            },
+            body: JSON.stringify({ VhcID: id })
+        });
+
+        if (!response.ok) throw new Error(`DÚK Trace API chyba: ${response.status}`);
+        res.json(await response.json());
+    } catch (error) {
+        console.error("Chyba při stahování stopy DÚK:", error.message);
+        res.status(500).json({ ItemL: [] });
+    }
+});
+
 // --- 20. PROXY PRO DÚK TRASY (Geometrie linky) ---
     app.post('/duk/route', async (req, res) => {
     try {
