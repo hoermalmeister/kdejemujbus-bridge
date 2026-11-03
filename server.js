@@ -4,6 +4,7 @@ import compression from 'compression';
 import fs from 'fs';
 import { createPositionCache } from './lib/positionCache.js';
 import { jtskToWgs84 } from './lib/krovak.js';
+import { getPmdpVehicles, getPmdpTrip } from './lib/pmdpStream.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
 const UPSTREAM_TIMEOUT_MS = 10_000;
@@ -1059,6 +1060,20 @@ app.get('/idok/route', async (req, res) => {
     } catch (error) {
         console.error("Chyba trasy IDOK:", error.message);
         res.status(500).json({ lines: null });
+    }
+});
+
+// --- 24. PMDP (Plzeň) ---
+app.get('/pmdp', positionRoute('/pmdp', getPmdpVehicles));
+
+app.get('/pmdp/trip', async (req, res) => {
+    try {
+        const id = parseInt(req.query.id, 10);
+        if (!id) return res.status(400).json({ error: 'Chybí ID spoje' });
+        res.json(await getPmdpTrip(id));
+    } catch (error) {
+        console.error('Chyba spoje PMDP:', error.message);
+        res.status(500).json({ error: error.message });
     }
 });
 
