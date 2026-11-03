@@ -1,10 +1,22 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import fs from 'fs';
+import { openSegmentStore } from './lib/vdvSegments.js';
+import { createPositionCache } from './lib/positionCache.js';
+
+// Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
+const UPSTREAM_TIMEOUT_MS = 10_000;
+const nativeFetch = globalThis.fetch;
+globalThis.fetch = (url, options = {}) =>
+    nativeFetch(url, { signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS), ...options });
 
 const app = express();
 app.use(express.json());
 app.use(cors());
+app.use(compression());
+
+const positionRoute = createPositionCache();
 
 let jmkStops = {};
 let pidTrips = {};
@@ -61,8 +73,7 @@ try {
 }
 
 // --- 1. ENDPOINT PRO HLAVNÍ DATA ---
-app.get('/grapp', async (req, res) => {
-    try {
+app.get('/grapp', positionRoute('/grapp', async () => {
         const initResponse = await fetch('https://grapp.spravazeleznic.cz/', {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -106,13 +117,12 @@ app.get('/grapp', async (req, res) => {
             body: JSON.stringify(payload)
         });
 
+        if (!dataResponse.ok) throw new Error(`GRAPP API chyba: ${dataResponse.status}`);
         const data = await dataResponse.json();
         
         // Zde pošleme frontendu vše, co potřebuje k dalšímu dotazování
-        res.json({ Token: token, SessionId: sessionId, Data: data });
-
-    } catch (error) { res.status(500).json({ error: error.message }); }
-});
+        return { Token: token, SessionId: sessionId, Data: data };
+}));
 
 // --- 2. NOVÝ ENDPOINT PRO STAŽENÍ DETAILŮ ---
 app.get('/grapp/detail', async (req, res) => {
@@ -192,8 +202,7 @@ app.get('/grapp/timetable', async (req, res) => {
 });
 
 // --- 5. ENDPOINT PRO PID (S chytrou iterací a fallbackem) ---
-app.get('/pid', async (req, res) => {
-    try {
+app.get('/pid', positionRoute('/pid', async () => {
         const response = await fetch('https://mapa.pid.cz/getData.php');
         if (!response.ok) throw new Error("PID API selhalo");
     
@@ -226,12 +235,8 @@ app.get('/pid', async (req, res) => {
                 }
             }
         }
-        res.json(data);
-    } catch (err) {
-        console.error("Chyba PID:", err);
-        res.status(500).send("Chyba při stahování PID dat");
-    }
-});
+        return data;
+}));
 
 // --- NOVÝ DIAGNOSTICKÝ ENDPOINT PRO PID ---
 app.get('/pid-debug', (req, res) => {
@@ -440,8 +445,7 @@ async function fetchJmkApi(url) {
 }
 
 // --- 9A. ENDPOINT PRO IDS JMK (Základní polohy) ---
-app.get('/idsjmk', async (req, res) => {
-    try {
+app.get('/idsjmk', positionRoute('/idsjmk', async () => {
         const data = await fetchJmkApi('https://mapa.idsjmk.cz/api/vehicles');
         
         if (data && data.Vehicles) {
@@ -452,12 +456,8 @@ app.get('/idsjmk', async (req, res) => {
                 }
             });
         }
-        res.json(data);
-    } catch (err) {
-        console.error("Chyba IDS JMK Polohy:", err.message);
-        res.status(500).send(err.message);
-    }
-});
+        return data;
+}));
 
 // --- 9B. ENDPOINT PRO IDS JMK (Trasa na mapě) ---
 app.get('/idsjmk-route', async (req, res) => {
@@ -512,17 +512,10 @@ function calculateBearing(lat1, lon1, lat2, lon2) {
 
 // --- GLOBÁLNÍ PAMĚŤ A CACHE PRO VDV ---
 let vdvVehicleStates = {};
-let vdvCache = { data: [], timestamp: 0 }; // [NOVÉ] Ochrana paměti
 
 // --- 10. ENDPOINT PRO VDV (Vozidla) ---
-app.get('/vdv', async (req, res) => {
-    try {
+app.get('/vdv', positionRoute('/vdv', async () => {
         const now = Date.now();
-
-        // CACHE: Pokud se někdo ptal před méně než 10 vteřinami, vrátíme mu hotová data ze zálohy!
-        if (now - vdvCache.timestamp < 10000 && vdvCache.data.length > 0) {
-            return res.json(vdvCache.data);
-        }
 
         const targetUrl = `https://mapavdv.kr-vysocina.cz/Ajax/GetPoints?t=${now}`;
         const response = await fetch(targetUrl);
@@ -575,16 +568,8 @@ app.get('/vdv', async (req, res) => {
             if (!currentIds.has(Number(id))) delete vdvVehicleStates[id];
         }
 
-        // [NOVÉ] Uložíme výsledek do Cache pro případné další uživatele
-        vdvCache.data = activeData;
-        vdvCache.timestamp = now;
-
-        res.json(activeData);
-    } catch (err) {
-        console.error("Chyba VDV GetPoints:", err.message);
-        res.status(500).send("Chyba při stahování VDV dat");
-    }
-});
+        return activeData;
+}));
 
 // --- 11. ENDPOINT PRO VDV (Detail vozidla) ---
 app.get('/vdv/detail', async (req, res) => {
@@ -622,30 +607,31 @@ app.get('/vdv/timetable', async (req, res) => {
     }
 });
 
-// Načtení hotových segmentů z Github Actions (přidej někam nahoru pod ostatní jsony)
-let vdvSegments = {};
+// Spoje držíme v paměti, souřadnice segmentů se čtou z disku až při dotazu na trasu
 let vdvTrips = {};
+let vdvSegmentStore = Promise.resolve(null);
 try {
     if (fs.existsSync('./data/vdv_segments.json') && fs.existsSync('./data/vdv_trips.json')) {
-        vdvSegments = JSON.parse(fs.readFileSync('./data/vdv_segments.json', 'utf8'));
         vdvTrips = JSON.parse(fs.readFileSync('./data/vdv_trips.json', 'utf8'));
-        console.log(`VDV Trasy načteny: ${Object.keys(vdvTrips).length} spojů, ${Object.keys(vdvSegments).length} segmentů.`);
+        vdvSegmentStore = openSegmentStore('./data/vdv_segments.json');
+        vdvSegmentStore
+            .then(store => console.log(`VDV Trasy načteny: ${Object.keys(vdvTrips).length} spojů, ${store.size} segmentů.`))
+            .catch(e => console.warn("Upozornění: VDV segmenty se nepodařilo zaindexovat.", e.message));
     }
 } catch (e) {
     console.warn("Upozornění: VDV segmenty zatím neexistují.");
 }
 
-// ...
-
 // --- 13. ENDPOINT PRO VDV (Kreslení trasy pomocí spojování segmentů) ---
-app.get('/vdv/route', (req, res) => {
+app.get('/vdv/route', async (req, res) => {
     try {
         const { id } = req.query; // Přijde např. "841129_25"
         
         // Získáme pole identifikátorů segmentů: ["stopA|stopB", "stopB|stopC", ...]
         const tripSegments = vdvTrips[id];
+        const store = await vdvSegmentStore;
         
-        if (!tripSegments || tripSegments.length === 0) {
+        if (!store || !tripSegments || tripSegments.length === 0) {
             return res.json({ shape: null });
         }
 
@@ -653,7 +639,7 @@ app.get('/vdv/route', (req, res) => {
         
         // Jako Lego dílky spojíme souřadnice všech segmentů
         for (const segKey of tripSegments) {
-            const coords = vdvSegments[segKey];
+            const coords = await store.get(segKey);
             if (coords && coords.length > 0) {
                 // Abychom neměli zduplikované body na zlomech zastávek,
                 // přeskočíme první bod segmentu (pokud už ve fullShape něco je)
@@ -676,8 +662,7 @@ app.get('/vdv/route', (req, res) => {
 });
 
 // --- 14. ENDPOINT PRO IREDO (CORS Proxy) ---
-app.get('/iredo', async (req, res) => {
-    try {
+app.get('/iredo', positionRoute('/iredo', async () => {
         // Zvětšený Bounding Box pro celý východ ČR
         const payload = {
             "w": 14.0,
@@ -706,12 +691,8 @@ app.get('/iredo', async (req, res) => {
 
         const data = await response.json();
         // Pošleme data zpět našemu frontendu
-        res.json(data);
-    } catch (error) {
-        console.error("Chyba při stahování IREDO:", error.message);
-        res.status(500).json({ connections: [] });
-    }
-});
+        return data;
+}));
 
 // --- 15. ENDPOINT PRO IREDO DETAIL SPOJE (CORS Proxy) ---
 app.get('/iredo/detail', async (req, res) => {
@@ -740,8 +721,7 @@ app.get('/iredo/detail', async (req, res) => {
 });
 
 // --- 18. ENDPOINT PRO DÚK (CORS Proxy) ---
-app.get('/duk', async (req, res) => {
-    try {
+app.get('/duk', positionRoute('/duk', async () => {
         const payload = {
             "Reload": false,
             "ShowMissingRides": true,
@@ -765,13 +745,8 @@ app.get('/duk', async (req, res) => {
 
         if (!response.ok) throw new Error(`DÚK API chyba: ${response.status}`);
         
-        const data = await response.json();
-        res.json(data);
-    } catch (error) {
-        console.error("Chyba při stahování DÚK:", error.message);
-        res.status(500).json({ ItemL: [] });
-    }
-});
+        return await response.json();
+}));
 
 // --- 19. ENDPOINT PRO DÚK DETAIL (CORS Proxy) ---
 app.get('/duk/detail', async (req, res) => {
@@ -849,19 +824,13 @@ app.get('/duk/detail', async (req, res) => {
 // --- 21. IDPK Můstek ---
 // --- GLOBÁLNÍ PAMĚŤ A CACHE PRO IDPK ---
 const idpkHistory = new Map();
-let idpkCache = { data: [], timestamp: 0 }; // [NOVÉ] Ochrana paměti
 
 // --- 1. Poloha vozů IDPK ---
-app.get('/idpk', async (req, res) => {
-    try {
+app.get('/idpk', positionRoute('/idpk', async () => {
         const now = Date.now();
 
-        // CACHE: Pokud se někdo ptal před méně než 10 vteřinami, vrátíme mu hotová data ze zálohy
-        if (now - idpkCache.timestamp < 10000 && idpkCache.data.length > 0) {
-            return res.json(idpkCache.data);
-        }
-
         const response = await fetch('https://pvvd.idpk.cz/Ajax/GetPoints');
+        if (!response.ok) throw new Error(`IDPK API chyba: ${response.status}`);
         const rawData = await response.json();
         
         const vehicles = Array.isArray(rawData) ? rawData : (rawData.data || rawData.points || []);
@@ -901,16 +870,8 @@ app.get('/idpk', async (req, res) => {
             if (!currentIds.has(key)) idpkHistory.delete(key);
         }
 
-        // [NOVÉ] Uložíme výsledek do Cache
-        idpkCache.data = activeVehicles;
-        idpkCache.timestamp = now;
-
-        res.json(activeVehicles);
-    } catch (e) {
-        console.error("IDPK Bridge Error:", e);
-        res.status(500).send('Error');
-    }
-});
+        return activeVehicles;
+}));
 
 // --- 2. Detail vozu IDPK ---
 app.get('/idpk/detail', async (req, res) => {
