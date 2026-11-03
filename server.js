@@ -902,9 +902,14 @@ for (const portal of MPV_PORTALS) {
         if (!response.ok) throw new Error(`MPV ${portal} chyba: ${response.status}`);
         const data = await response.json();
         // Posíláme jen autobusy a jen údaje, které frontend používá
-        return (data.transmitters || [])
+        const own = (data.transmitters || [])
             .filter(v => v.cat !== MPV_TRAIN_CATEGORY && String(v.cn || '').includes('|'))
             .map(({ x, y, ico, dm, cr, cn, cat }) => ({ x, y, ico, dm, cr, cat, cn }));
+        // Vozy ostatních IDS mají údaje v "extrads" a zdroj k nim nedává trasu ani jízdní řád
+        const external = (data.external || [])
+            .filter(v => String(v.extrads || '').includes('|'))
+            .map(({ x, y, ico, dm, cr, extrads, cat }) => ({ x, y, ico, dm, cr, cat, cn: extrads, external: true }));
+        return [...own, ...external];
     }));
 
     app.get(`/mpv/${portal}/route`, async (req, res) => {
