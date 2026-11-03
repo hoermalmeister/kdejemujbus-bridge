@@ -7,6 +7,9 @@ a drží se jen tvary spojů, které pojedou v následujících dnech.
 Výstup: <out>/routes/<linka>.json
   {"base": "20261103", "shapes": ["<polyline>", ...], "trips": {"<spoj>": [[index_tvaru, maska_dnů], ...]}}
 Bit N v masce znamená, že varianta jede v den base + N.
+
+U linek bez vlastního jízdního řádu (MHD Havlíčkův Brod) navíc <out>/timetables/<linka>_<spoj>.json
+  [{"name": "...", "arr": "08:35", "dep": "08:35"}, ...]
 """
 import csv
 import io
@@ -20,6 +23,7 @@ from datetime import date, timedelta
 
 WINDOW_DAYS = 8
 TOLERANCE_M = 10.0
+TIMETABLE_LINE_PREFIXES = ('6050',)
 
 
 def rows(archive, name):
@@ -116,6 +120,30 @@ def read_shapes(archive, wanted):
     return encoded
 
 
+def write_timetables(archive, wanted_trips, out_dir):
+    """wanted_trips: trip_id -> (linka, spoj). Jezdí-li spoj ve více variantách, stačí první."""
+    if not wanted_trips:
+        return
+    names = {row['stop_id']: row['stop_name'] for row in rows(archive, 'stops.txt')}
+    stops = defaultdict(list)
+    for row in rows(archive, 'stop_times.txt'):
+        if row['trip_id'] in wanted_trips:
+            stops[row['trip_id']].append((
+                int(row['stop_sequence']),
+                names.get(row['stop_id'], row['stop_id']),
+                row['arrival_time'][:5],
+                row['departure_time'][:5]
+            ))
+    timetable_dir = os.path.join(out_dir, 'timetables')
+    os.makedirs(timetable_dir, exist_ok=True)
+    for trip_id, entries in stops.items():
+        line, run = wanted_trips[trip_id]
+        payload = [{'name': name, 'arr': arr, 'dep': dep} for _, name, arr, dep in sorted(entries)]
+        with open(os.path.join(timetable_dir, f'{line}_{run}.json'), 'w', encoding='utf-8') as handle:
+            json.dump(payload, handle, ensure_ascii=False, separators=(',', ':'))
+    print(f'Jízdních řádů: {len(stops)}', flush=True)
+
+
 def main(feed_path, out_dir):
     base = date.today()
     with zipfile.ZipFile(feed_path) as archive:
@@ -123,6 +151,8 @@ def main(feed_path, out_dir):
 
         lines = defaultdict(lambda: defaultdict(dict))
         wanted = set()
+        timetable_trips = {}
+        seen_timetables = set()
         total = 0
         for row in rows(archive, 'trips.txt'):
             total += 1
@@ -134,9 +164,13 @@ def main(feed_path, out_dir):
             variants = lines[line][run]
             variants[row['shape_id']] = variants.get(row['shape_id'], 0) | mask
             wanted.add(row['shape_id'])
+            if line.startswith(TIMETABLE_LINE_PREFIXES) and (line, run) not in seen_timetables:
+                seen_timetables.add((line, run))
+                timetable_trips[row['trip_id']] = (line, run)
         print(f'Spojů celkem: {total}, linek v okně: {len(lines)}, tvarů: {len(wanted)}', flush=True)
 
         shapes = read_shapes(archive, wanted)
+        write_timetables(archive, timetable_trips, out_dir)
 
     routes_dir = os.path.join(out_dir, 'routes')
     os.makedirs(routes_dir, exist_ok=True)

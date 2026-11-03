@@ -5,6 +5,7 @@ import fs from 'fs';
 import { createPositionCache } from './lib/positionCache.js';
 import { jtskToWgs84 } from './lib/krovak.js';
 import { getPmdpVehicles, getPmdpTrip } from './lib/pmdpStream.js';
+import { getTshbVehicles } from './lib/tshbStream.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
 const UPSTREAM_TIMEOUT_MS = 10_000;
@@ -1076,6 +1077,9 @@ app.get('/pmdp/trip', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+// --- 25. TSHB (MHD Havlíčkův Brod) ---
+app.get('/tshb', positionRoute('/tshb', getTshbVehicles));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
