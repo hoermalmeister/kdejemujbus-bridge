@@ -6,7 +6,8 @@ import { createPositionCache } from './lib/positionCache.js';
 import { jtskToWgs84 } from './lib/krovak.js';
 import { getPmdpVehicles, getPmdpTrip } from './lib/pmdpStream.js';
 import { getTshbVehicles } from './lib/tshbStream.js';
-import { parseDpmdVehicles } from './lib/dpmdParser.js';
+import { parseDpmdVehicles, parseGpxRoute } from './lib/dpmdParser.js';
+import { createDpmpVehicles, getDpmpTrip } from './lib/dpmpApi.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
 const UPSTREAM_TIMEOUT_MS = 10_000;
@@ -1083,13 +1084,44 @@ app.get('/pmdp/trip', async (req, res) => {
 app.get('/tshb', positionRoute('/tshb', getTshbVehicles));
 
 // --- 26. DPMD (Děčín) ---
+// Trasy jsou v každé odpovědi zdroje, ale klient je potřebuje jen u vybraného vozu
+let dpmdRoutes = new Map();
+
 app.get('/dpmd', positionRoute('/dpmd', async () => {
     const response = await fetch(`https://tabla.dpmdas.cz/data/TrafficState.js?v=${Date.now()}`, {
         headers: { 'origin': 'https://doprava.dpmdas.cz', 'referer': 'https://doprava.dpmdas.cz/' }
     });
     if (!response.ok) throw new Error(`DPMD chyba: ${response.status}`);
-    return parseDpmdVehicles(await response.text());
+    const routes = new Map();
+    const vehicles = parseDpmdVehicles(await response.text()).map(({ gpx, ...vehicle }) => {
+        if (gpx) routes.set(vehicle.vehicle, gpx);
+        return vehicle;
+    });
+    dpmdRoutes = routes;
+    return vehicles;
 }));
+
+app.get('/dpmd/route', (req, res) => {
+    const route = parseGpxRoute(dpmdRoutes.get(String(req.query.vehicle)));
+    if (route.length < 2) return res.status(404).json({ error: 'Trasa není k dispozici' });
+    res.json(route);
+});
+
+// --- 27. DPMP (Pardubice) ---
+app.get('/dpmp', positionRoute('/dpmp', createDpmpVehicles(calculateBearing)));
+
+app.get('/dpmp/trip', async (req, res) => {
+    try {
+        const { line, connection } = req.query;
+        if (!/^\w+$/.test(line || '') || !/^\d+$/.test(connection || '')) {
+            return res.status(400).json({ error: 'Chybí linka nebo spoj' });
+        }
+        res.json(await getDpmpTrip(line, connection));
+    } catch (error) {
+        console.error('Chyba spoje DPMP:', error.message);
+        res.status(502).json({ error: error.message });
+    }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
