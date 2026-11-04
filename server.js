@@ -8,6 +8,7 @@ import { getPmdpVehicles, getPmdpTrip } from './lib/pmdpStream.js';
 import { getTshbVehicles } from './lib/tshbStream.js';
 import { parseDpmdVehicles, parseGpxRoute } from './lib/dpmdParser.js';
 import { createDpmpVehicles, getDpmpTrip } from './lib/dpmpApi.js';
+import { parseDpmlbVehicles } from './lib/dpmlbParser.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
 const UPSTREAM_TIMEOUT_MS = 10_000;
@@ -1122,6 +1123,13 @@ app.get('/dpmp/trip', async (req, res) => {
         res.status(502).json({ error: error.message });
     }
 });
+
+// --- 28. DPMLB (Mladá Boleslav) ---
+app.get('/dpmlb', positionRoute('/dpmlb', async () => {
+    const response = await fetch('https://preparator.eternal.cz/services/mboleslav/bus_positions?guid=146&ext=MBoleslav2');
+    if (!response.ok) throw new Error(`DPMLB chyba: ${response.status}`);
+    return parseDpmlbVehicles(await response.text());
+}));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
