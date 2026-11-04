@@ -5,14 +5,24 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 14
     steps:
-      - name: raw
+      - uses: actions/checkout@v4
+        with: { ref: feat/dpmlb-dir }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --silent
+      - name: build + server
         run: |
-          curl -sS -m 20 "https://preparator.eternal.cz/services/mboleslav/bus_positions?guid=146&ext=MBoleslav2" > live.xml
+          curl -fsSL --retry 3 -o feed.zip https://motis.obehy.cz/get-feeds/cz-jdf-gtfs.zip
+          python3 scripts/build_route_shapes.py feed.zip site >/dev/null 2>&1
+          head -c 120 site/match/265162.json | sed 's/^/PG matchsample /'; echo
+          ( cd site && python3 -m http.server 8000 >/dev/null 2>&1 & ) ; sleep 2
+          DPMLB_ROUTES_BASE=http://localhost:8000 PORT=3999 node server.js > s.log 2>&1 &
+          sleep 8
           node -e '
-          const s=require("fs").readFileSync("live.xml","utf8");
-          for(const m of s.matchAll(/<Item\s+([\s\S]*?)\/>/g)){
-            const a=Object.fromEntries([...m[1].matchAll(/(\w+)="([^"]*)"/g)].map(x=>[x[1],x[2]]));
-            console.log("PG",JSON.stringify(a.title),JSON.stringify((a.text||"").replace(/&lt;/g,"<").replace(/&gt;/g,">")));
-          }'
+          (async()=>{const d=await (await fetch("http://localhost:3999/dpmlb")).json();
+          console.log("PG dpmlb",d.length,"s_run",d.filter(v=>v.run!=null).length);
+          for(const v of d.filter(x=>/^2651/.test(x.fullLine)&&(x.line.length<=2))) {}
+          for(const v of d)console.log("PG v","linka",v.line,"run",v.run??"-","cíl",JSON.stringify(v.destination));
+          })()'
