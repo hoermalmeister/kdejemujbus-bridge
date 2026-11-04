@@ -1108,11 +1108,20 @@ app.get('/dpmd/route', (req, res) => {
 });
 
 // --- 27. DPMP (Pardubice) ---
-// Vypnuto: jediným zdrojem poloh je studentská mapa online.dpmp.cz, jejíž API vyžaduje
-// časově omezenou hlavičku X-App-Protocol (HMAC z času + klíče v jejich kódu). Napodobit ji
-// by znamenalo vydávat se za jejich aplikaci. Kód v lib/dpmpApi.js zůstává pro případ
-// legálního přístupu. Viz importy createDpmpVehicles/getDpmpTrip.
-void createDpmpVehicles; void getDpmpTrip;
+app.get('/dpmp', positionRoute('/dpmp', createDpmpVehicles(calculateBearing)));
+
+app.get('/dpmp/trip', async (req, res) => {
+    try {
+        const { line, connection } = req.query;
+        if (!/^\w+$/.test(line || '') || !/^\d+$/.test(connection || '')) {
+            return res.status(400).json({ error: 'Chybí linka nebo spoj' });
+        }
+        res.json(await getDpmpTrip(line, connection));
+    } catch (error) {
+        console.error('Chyba spoje DPMP:', error.message);
+        res.status(502).json({ error: error.message });
+    }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
