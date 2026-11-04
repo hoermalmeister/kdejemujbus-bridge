@@ -11,27 +11,28 @@ jobs:
         with: { ref: feat/dpmlb-jr }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - name: Build + match
+      - name: TZ diag
         run: |
           curl -fsSL --retry 3 -o feed.zip https://motis.obehy.cz/get-feeds/cz-jdf-gtfs.zip
           python3 scripts/build_route_shapes.py feed.zip site >/dev/null 2>&1
           curl -sS -m 20 "https://preparator.eternal.cz/services/mboleslav/bus_positions?guid=146&ext=MBoleslav2" > live.xml
           ( cd site && python3 -m http.server 8000 >/dev/null 2>&1 & ) ; sleep 2
+          echo "PG runnerTZ $(date) | UTC $(date -u +%H:%M)"
           DPMLB_ROUTES_BASE=http://localhost:8000 node --input-type=module -e '
           import {parseDpmlbVehicles} from "./lib/dpmlbParser.js";
           import {matchDpmlb} from "./lib/dpmlbMatch.js";
           import {readFileSync} from "fs";
           const v=parseDpmlbVehicles(readFileSync("live.xml","utf8"));
-          const now=new Date();const nowSec=now.getHours()*3600+now.getMinutes()*60+now.getSeconds();
-          console.log("PG teď",now.toTimeString().slice(0,8),"vozů",v.length);
-          let ok=0;
-          for(const b of v){
-            const m=await matchDpmlb(b.fullLine,b.lat,b.lng,b.delay||0,nowSec);
-            if(m){ok++;
-              const tt=await fetch(`http://localhost:8000/timetables/${b.fullLine}_${m.run}.json`).then(r=>r.ok?r.json():null).catch(()=>null);
-              const rt=await fetch(`http://localhost:8000/routes/${b.fullLine}.json`).then(r=>r.ok?r.json():null).catch(()=>null);
-              console.log("PG match",b.line,b.fullLine,"run",m.run,"zast#"+m.stopIndex,(tt?.[m.stopIndex]?.name)||"?","| řád",tt?tt.length:"NE","| trasa",rt?.trips?.[m.run]?"ano":"NE","| zpozd",b.delay,"cíl",b.destination);
-            } else console.log("PG nomatch",b.line,b.fullLine,"cíl",b.destination);
+          const d=new Date();const utc=d.getUTCHours()*3600+d.getUTCMinutes()*60+d.getUTCSeconds();
+          for(const [label,nowSec] of [["UTC",utc],["Praha+1",utc+3600],["-1",utc-3600]]){
+            let sum=0,cnt=0,med=[];
+            for(const b of v){const m=await matchDpmlb(b.fullLine,b.lat,b.lng,b.delay||0,nowSec);if(m){sum+=m.dist;cnt++;med.push(m.dist);}}
+            med.sort((a,b)=>a-b);
+            console.log("PG tz",label,"n",cnt,"prům",Math.round(sum/cnt),"medián",med[Math.floor(med.length/2)]);
           }
-          console.log("PG shrnutí",ok,"/",v.length);
+          // detail s Praha+1
+          console.log("PG --- Praha+1 detail ---");
+          for(const b of v){const m=await matchDpmlb(b.fullLine,b.lat,b.lng,b.delay||0,utc+3600);
+            const tt=await fetch(`http://localhost:8000/timetables/${b.fullLine}_${m?.run}.json`).then(r=>r.ok?r.json():null).catch(()=>null);
+            console.log("PG v",b.line,"run",m?.run,"d="+(m?.dist)+"m","zast",(tt?.[m?.stopIndex]?.name)||"?","("+(m?.stopIndex)+"/"+(tt?tt.length-1:"?")+")","zpozd",b.delay);}
           '
