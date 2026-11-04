@@ -5,15 +5,12 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
-      - name: Verify Pages + prod bridge
+      - name: Wait + prod
         run: |
-          P=https://hoermalmeister.github.io/kdejemujbus-bridge
-          for u in match/265101.json timetables/265101_1.json timetables/265140_1.json; do
-            curl -sS -m 25 -o /dev/null -w "PG pages $u %{http_code} %{size_download}B\n" "$P/$u"
+          for i in 1 2 3 4 5 6; do
+            curl -sS -m 25 "https://grapp-bridge-production.up.railway.app/dpmlb" -o d.json
+            node -e 'const d=JSON.parse(require("fs").readFileSync("d.json"));const r=d.filter(v=>v.run!=null).length;console.log("PG try '"$i"' vozů",d.length,"s_run",r);if(r>0){const v=d.find(x=>x.run!=null);console.log("PG ok",v.line,"run",v.run,"zast#",v.stopIndex,"cíl",v.destination);process.exit(0)}process.exit(1)' && break
+            sleep 40
           done
-          curl -sS -m 25 "$P/match/265101.json" | head -c 90 | sed 's/^/PG sample /'; echo
-          echo "PG --- produkční bridge ---"
-          curl -sS -m 25 "https://grapp-bridge-production.up.railway.app/dpmlb" -o d.json -w "PG prod code=%{http_code}\n"
-          node -e 'try{const d=JSON.parse(require("fs").readFileSync("d.json"));console.log("PG prod vozů",d.length,"s_run",d.filter(v=>v.run!=null).length);console.log("PG prod v0",JSON.stringify(d[0]))}catch(e){console.log("PG prod ERR",String(e).slice(0,80))}'
