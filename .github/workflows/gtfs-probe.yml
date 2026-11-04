@@ -1,0 +1,61 @@
+name: GTFS probe
+on:
+  push:
+    branches: ['probe/gtfs-feed']
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Run
+        run: |
+          curl -fsSL --retry 3 -o feed.zip https://motis.obehy.cz/get-feeds/cz-jdf-gtfs.zip
+          wc -c feed.zip | sed 's/^/PG feedsize /'
+          python3 - <<'PY'
+          import zipfile,csv,io,collections
+          z=zipfile.ZipFile('feed.zip')
+          def rows(n):
+              with z.open(n) as r: yield from csv.DictReader(io.TextIOWrapper(r,encoding='utf-8-sig',newline=''))
+          # trips s linkou 2651xx
+          trips={}  # trip_id -> (line,run,shape,service,headsign,dir)
+          lines=collections.defaultdict(set)
+          cols=None
+          for t in rows('trips.txt'):
+              if cols is None:
+                  cols=list(t.keys());print("PG tripcols",",".join(cols))
+              sn=t.get('trip_short_name','')
+              p=sn.split()
+              if len(p)==2 and p[0].startswith('2651'):
+                  trips[t['trip_id']]=(p[0],p[1],t.get('shape_id',''),t.get('service_id',''),t.get('trip_headsign',''),t.get('direction_id',''))
+                  lines[p[0]].add(p[1])
+          print("PG mblines",len(lines),"trips",len(trips))
+          for ln in sorted(lines)[:6]: print("PG line",ln,"runs",len(lines[ln]))
+          # vyber jednu linku s víc spoji
+          ln=max(lines,key=lambda l:len(lines[l]))
+          mine={tid:v for tid,v in trips.items() if v[0]==ln}
+          print("PG focusline",ln,"trips",len(mine))
+          # stop_times pro tyto tripy + souřadnice zastávek
+          stopc={s['stop_id']:(s['stop_name'],s.get('stop_lat'),s.get('stop_lon')) for s in rows('stops.txt')}
+          st=collections.defaultdict(list)
+          want=set(mine)
+          for r in rows('stop_times.txt'):
+              if r['trip_id'] in want:
+                  st[r['trip_id']].append((int(r['stop_sequence']),r['departure_time'],r['stop_id']))
+          # ukázka jednoho tripu
+          tid=sorted(mine, key=lambda k:len(st[k]))[-1]
+          seq=sorted(st[tid])
+          print("PG sampletrip",mine[tid])
+          for s in seq[:3]+seq[-2:]:
+              nm,la,lo=stopc.get(s[2],('?',None,None));print("PG stop",s[0],s[1],nm,la,lo)
+          # headway: první odjezdy spojů dané linky v jednom směru
+          firsts=[]
+          for t,v in mine.items():
+              if st[t]:
+                  seq2=sorted(st[t]); firsts.append((seq2[0][1],v[1],v[5],stopc.get(seq2[-1][2],('?',))[0]))
+          firsts.sort()
+          print("PG firstdeps_sample")
+          for f in firsts[20:30]: print("PG dep",f[0],"run",f[1],"dir",f[2],"->",f[3])
+          # kolik má linka směrů/cílů
+          dests=collections.Counter(f[3] for f in firsts)
+          print("PG dests",dict(list(dests.items())[:8]))
+          PY
