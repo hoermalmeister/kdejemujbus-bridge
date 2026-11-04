@@ -5,57 +5,85 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - name: Run
         run: |
           curl -fsSL --retry 3 -o feed.zip https://motis.obehy.cz/get-feeds/cz-jdf-gtfs.zip
-          wc -c feed.zip | sed 's/^/PG feedsize /'
+          curl -sS -m 20 "https://preparator.eternal.cz/services/mboleslav/bus_positions?guid=146&ext=MBoleslav2" > live.xml
           python3 - <<'PY'
-          import zipfile,csv,io,collections
+          import zipfile,csv,io,collections,math,re,datetime
           z=zipfile.ZipFile('feed.zip')
           def rows(n):
               with z.open(n) as r: yield from csv.DictReader(io.TextIOWrapper(r,encoding='utf-8-sig',newline=''))
-          # trips s linkou 2651xx
-          trips={}  # trip_id -> (line,run,shape,service,headsign,dir)
-          lines=collections.defaultdict(set)
-          cols=None
+          base=datetime.date.today(); wd=['monday','tuesday','wednesday','thursday','friday','saturday','sunday'][base.weekday()]
+          # service_id jedoucí dnes
+          today=set()
+          for r in rows('calendar.txt'):
+              s=datetime.date(int(r['start_date'][:4]),int(r['start_date'][4:6]),int(r['start_date'][6:8]))
+              e=datetime.date(int(r['end_date'][:4]),int(r['end_date'][4:6]),int(r['end_date'][6:8]))
+              if s<=base<=e and r[wd]=='1': today.add(r['service_id'])
+          for r in rows('calendar_dates.txt'):
+              d=datetime.date(int(r['date'][:4]),int(r['date'][4:6]),int(r['date'][6:8]))
+              if d==base: today.add(r['service_id']) if r['exception_type']=='1' else today.discard(r['service_id'])
+          # MB tripy jedoucí dnes
+          trips={}
           for t in rows('trips.txt'):
-              if cols is None:
-                  cols=list(t.keys());print("PG tripcols",",".join(cols))
-              sn=t.get('trip_short_name','')
-              p=sn.split()
-              if len(p)==2 and p[0].startswith('2651'):
-                  trips[t['trip_id']]=(p[0],p[1],t.get('shape_id',''),t.get('service_id',''),t.get('trip_headsign',''),t.get('direction_id',''))
-                  lines[p[0]].add(p[1])
-          print("PG mblines",len(lines),"trips",len(trips))
-          for ln in sorted(lines)[:6]: print("PG line",ln,"runs",len(lines[ln]))
-          # vyber jednu linku s víc spoji
-          ln=max(lines,key=lambda l:len(lines[l]))
-          mine={tid:v for tid,v in trips.items() if v[0]==ln}
-          print("PG focusline",ln,"trips",len(mine))
-          # stop_times pro tyto tripy + souřadnice zastávek
-          stopc={s['stop_id']:(s['stop_name'],s.get('stop_lat'),s.get('stop_lon')) for s in rows('stops.txt')}
+              p=t.get('trip_short_name','').split()
+              if len(p)==2 and p[0].startswith('2651') and t['service_id'] in today:
+                  trips[t['trip_id']]=(p[0],p[1],t.get('trip_headsign',''))
+          stopc={s['stop_id']:(s['stop_name'],float(s['stop_lat']),float(s['stop_lon'])) for s in rows('stops.txt')}
+          def sec(x):
+              h,m,s=x.split(':');return int(h)*3600+int(m)*60+int(s)
           st=collections.defaultdict(list)
-          want=set(mine)
           for r in rows('stop_times.txt'):
-              if r['trip_id'] in want:
-                  st[r['trip_id']].append((int(r['stop_sequence']),r['departure_time'],r['stop_id']))
-          # ukázka jednoho tripu
-          tid=sorted(mine, key=lambda k:len(st[k]))[-1]
-          seq=sorted(st[tid])
-          print("PG sampletrip",mine[tid])
-          for s in seq[:3]+seq[-2:]:
-              nm,la,lo=stopc.get(s[2],('?',None,None));print("PG stop",s[0],s[1],nm,la,lo)
-          # headway: první odjezdy spojů dané linky v jednom směru
-          firsts=[]
-          for t,v in mine.items():
-              if st[t]:
-                  seq2=sorted(st[t]); firsts.append((seq2[0][1],v[1],v[5],stopc.get(seq2[-1][2],('?',))[0]))
-          firsts.sort()
-          print("PG firstdeps_sample")
-          for f in firsts[20:30]: print("PG dep",f[0],"run",f[1],"dir",f[2],"->",f[3])
-          # kolik má linka směrů/cílů
-          dests=collections.Counter(f[3] for f in firsts)
-          print("PG dests",dict(list(dests.items())[:8]))
+              if r['trip_id'] in trips:
+                  st[r['trip_id']].append((int(r['stop_sequence']),sec(r['departure_time']),r['stop_id']))
+          # sestav kandidáty: line -> list(run,headsign,stops[(sec,lat,lon,name)])
+          byline=collections.defaultdict(list)
+          for tid,(ln,run,hs) in trips.items():
+              seq=sorted(st[tid])
+              pts=[(d,*stopc[sid][1:],stopc[sid][0]) for _,d,sid in seq if sid in stopc]
+              if len(pts)>=2: byline[ln].append((run,hs,pts))
+          print("PG dnes_linky",len(byline),"spojů",sum(len(v) for v in byline.values()))
+          def hav(a,b,c,d):
+              R=6371000;p=math.radians
+              return 2*R*math.asin(math.sqrt(math.sin(p(c-a)/2)**2+math.cos(p(a))*math.cos(p(c))*math.sin(p(d-b)/2)**2))
+          def expos(pts,t):
+              if t<=pts[0][0]: return pts[0][1],pts[0][2],0
+              for i in range(len(pts)-1):
+                  if pts[i][0]<=t<pts[i+1][0]:
+                      f=(t-pts[i][0])/max(1,pts[i+1][0]-pts[i][0])
+                      return pts[i][1]+(pts[i+1][1]-pts[i][1])*f, pts[i][2]+(pts[i+1][2]-pts[i][2])*f, i
+              return pts[-1][1],pts[-1][2],len(pts)-1
+          # živé vozy
+          xml=open('live.xml',encoding='utf-8').read()
+          heads={}
+          items=[]
+          for m in re.finditer(r'<Item\s+([\s\S]*?)/>',xml):
+              a=dict(re.findall(r'(\w+)="([^"]*)"',m.group(1)));items.append(a)
+          now=datetime.datetime.now()
+          nowsec=now.hour*3600+now.minute*60+now.second
+          LINE={'A':'265101','B':'265102','C':'265103','RB':'265104','RA':'265105','H':'265112'}
+          print("PG teď",now.strftime('%H:%M:%S'),"vozů",len(items))
+          ok=0
+          for a in items:
+              title=a['title']; full=LINE.get(title) or ('2651%02d'%int(title) if title.isdigit() else None)
+              lat=float(a['latitude']);lon=float(a['longitude'])
+              txt=re.sub(r'&lt;','<',a['text']); 
+              m=re.search(r'Zpoždění\s+(\d+)',txt); dly=int(m.group(1)) if m else 0
+              cands=byline.get(full,[])
+              best=None
+              for run,hs,pts in cands:
+                  t=nowsec-dly*60
+                  if t<pts[0][0]-120 or t>pts[-1][0]+120: continue
+                  el,eo,idx=expos(pts,t); dist=hav(lat,lon,el,eo)
+                  if best is None or dist<best[0]: best=(dist,run,hs,idx,pts)
+              dest=txt.split('<br>')[0].split(' - ')[-1]
+              if best and best[0]<500:
+                  ok+=1
+                  print("PG match",title,"->",full,"run",best[1],"d=%dm"%best[0],"dly",dly,"cíl",dest,"| GTFS cíl",best[2],"| zast.",best[4][best[3]][3])
+              else:
+                  print("PG nomatch",title,full,"cíl",dest,"best",("%dm"%best[0] if best else "-"),"kandidátů",len(cands))
+          print("PG shrnutí",ok,"/",len(items))
           PY
