@@ -5,85 +5,38 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 14
     steps:
-      - name: Run
+      - uses: actions/checkout@v4
+        with: { ref: feat/dpmlb-jr }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Build + match
         run: |
           curl -fsSL --retry 3 -o feed.zip https://motis.obehy.cz/get-feeds/cz-jdf-gtfs.zip
+          python3 scripts/build_route_shapes.py feed.zip site 2>&1 | sed 's/^/PG build /'
+          echo "PG matchfiles $(ls site/match | wc -l) ttfiles $(ls site/timetables | grep -c '^2651')"
+          du -sh site/match | sed 's/^/PG matchsize /'
+          head -c 260 site/match/265101.json | sed 's/^/PG sample /'; echo
           curl -sS -m 20 "https://preparator.eternal.cz/services/mboleslav/bus_positions?guid=146&ext=MBoleslav2" > live.xml
-          python3 - <<'PY'
-          import zipfile,csv,io,collections,math,re,datetime
-          z=zipfile.ZipFile('feed.zip')
-          def rows(n):
-              with z.open(n) as r: yield from csv.DictReader(io.TextIOWrapper(r,encoding='utf-8-sig',newline=''))
-          base=datetime.date.today(); wd=['monday','tuesday','wednesday','thursday','friday','saturday','sunday'][base.weekday()]
-          # service_id jedoucí dnes
-          today=set()
-          for r in rows('calendar.txt'):
-              s=datetime.date(int(r['start_date'][:4]),int(r['start_date'][4:6]),int(r['start_date'][6:8]))
-              e=datetime.date(int(r['end_date'][:4]),int(r['end_date'][4:6]),int(r['end_date'][6:8]))
-              if s<=base<=e and r[wd]=='1': today.add(r['service_id'])
-          for r in rows('calendar_dates.txt'):
-              d=datetime.date(int(r['date'][:4]),int(r['date'][4:6]),int(r['date'][6:8]))
-              if d==base: today.add(r['service_id']) if r['exception_type']=='1' else today.discard(r['service_id'])
-          # MB tripy jedoucí dnes
-          trips={}
-          for t in rows('trips.txt'):
-              p=t.get('trip_short_name','').split()
-              if len(p)==2 and p[0].startswith('2651') and t['service_id'] in today:
-                  trips[t['trip_id']]=(p[0],p[1],t.get('trip_headsign',''))
-          stopc={s['stop_id']:(s['stop_name'],float(s['stop_lat']),float(s['stop_lon'])) for s in rows('stops.txt')}
-          def sec(x):
-              h,m,s=x.split(':');return int(h)*3600+int(m)*60+int(s)
-          st=collections.defaultdict(list)
-          for r in rows('stop_times.txt'):
-              if r['trip_id'] in trips:
-                  st[r['trip_id']].append((int(r['stop_sequence']),sec(r['departure_time']),r['stop_id']))
-          # sestav kandidáty: line -> list(run,headsign,stops[(sec,lat,lon,name)])
-          byline=collections.defaultdict(list)
-          for tid,(ln,run,hs) in trips.items():
-              seq=sorted(st[tid])
-              pts=[(d,*stopc[sid][1:],stopc[sid][0]) for _,d,sid in seq if sid in stopc]
-              if len(pts)>=2: byline[ln].append((run,hs,pts))
-          print("PG dnes_linky",len(byline),"spojů",sum(len(v) for v in byline.values()))
-          def hav(a,b,c,d):
-              R=6371000;p=math.radians
-              return 2*R*math.asin(math.sqrt(math.sin(p(c-a)/2)**2+math.cos(p(a))*math.cos(p(c))*math.sin(p(d-b)/2)**2))
-          def expos(pts,t):
-              if t<=pts[0][0]: return pts[0][1],pts[0][2],0
-              for i in range(len(pts)-1):
-                  if pts[i][0]<=t<pts[i+1][0]:
-                      f=(t-pts[i][0])/max(1,pts[i+1][0]-pts[i][0])
-                      return pts[i][1]+(pts[i+1][1]-pts[i][1])*f, pts[i][2]+(pts[i+1][2]-pts[i][2])*f, i
-              return pts[-1][1],pts[-1][2],len(pts)-1
-          # živé vozy
-          xml=open('live.xml',encoding='utf-8').read()
-          heads={}
-          items=[]
-          for m in re.finditer(r'<Item\s+([\s\S]*?)/>',xml):
-              a=dict(re.findall(r'(\w+)="([^"]*)"',m.group(1)));items.append(a)
-          now=datetime.datetime.now()
-          nowsec=now.hour*3600+now.minute*60+now.second
-          LINE={'A':'265101','B':'265102','C':'265103','RB':'265104','RA':'265105','H':'265112'}
-          print("PG teď",now.strftime('%H:%M:%S'),"vozů",len(items))
-          ok=0
-          for a in items:
-              title=a['title']; full=LINE.get(title) or ('2651%02d'%int(title) if title.isdigit() else None)
-              lat=float(a['latitude']);lon=float(a['longitude'])
-              txt=re.sub(r'&lt;','<',a['text']); 
-              m=re.search(r'Zpoždění\s+(\d+)',txt); dly=int(m.group(1)) if m else 0
-              cands=byline.get(full,[])
-              best=None
-              for run,hs,pts in cands:
-                  t=nowsec-dly*60
-                  if t<pts[0][0]-120 or t>pts[-1][0]+120: continue
-                  el,eo,idx=expos(pts,t); dist=hav(lat,lon,el,eo)
-                  if best is None or dist<best[0]: best=(dist,run,hs,idx,pts)
-              dest=txt.split('<br>')[0].split(' - ')[-1]
-              if best and best[0]<500:
-                  ok+=1
-                  print("PG match",title,"->",full,"run",best[1],"d=%dm"%best[0],"dly",dly,"cíl",dest,"| GTFS cíl",best[2],"| zast.",best[4][best[3]][3])
-              else:
-                  print("PG nomatch",title,full,"cíl",dest,"best",("%dm"%best[0] if best else "-"),"kandidátů",len(cands))
-          print("PG shrnutí",ok,"/",len(items))
-          PY
+          ( cd site && python3 -m http.server 8000 >/dev/null 2>&1 & ) ; sleep 2
+          DPMLB_ROUTES_BASE=http://localhost:8000 node --input-type=module -e '
+          import {parseDpmlbVehicles} from "./lib/dpmlbParser.js";
+          import {matchDpmlb} from "./lib/dpmlbMatch.js";
+          import {readFileSync} from "fs";
+          const v=parseDpmlbVehicles(readFileSync("live.xml","utf8"));
+          const now=new Date();const nowSec=now.getHours()*3600+now.getMinutes()*60+now.getSeconds();
+          console.log("PG teď",now.toTimeString().slice(0,8),"vozů",v.length);
+          let ok=0;
+          for(const b of v){
+            const m=await matchDpmlb(b.fullLine,b.lat,b.lng,b.delay||0,nowSec);
+            if(m){ok++;
+              // ověř, že existuje i jízdní řád a trasa
+              const tt=await fetch(`http://localhost:8000/timetables/${b.fullLine}_${m.run}.json`).then(r=>r.ok?r.json():null).catch(()=>null);
+              const rt=await fetch(`http://localhost:8000/routes/${b.fullLine}.json`).then(r=>r.ok?r.json():null).catch(()=>null);
+              const stop=tt?.[m.stopIndex]?.name;
+              console.log("PG match",b.line,b.fullLine,"run",m.run,"zast#"+m.stopIndex,stop||"?","| řád",tt?tt.length:"NE","| trasa",rt?.trips?.[m.run]?"ano":"NE","| zpozd",b.delay,"cíl",b.destination);
+            } else console.log("PG nomatch",b.line,b.fullLine,"cíl",b.destination);
+          }
+          console.log("PG shrnutí",ok,"/",v.length);
+          '
