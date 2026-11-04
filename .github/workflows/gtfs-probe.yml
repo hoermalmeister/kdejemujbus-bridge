@@ -5,13 +5,22 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 16
+    timeout-minutes: 6
     steps:
-      - name: wait prod
+      - uses: actions/checkout@v4
+        with: { ref: feat/dpmlb-line }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: test
         run: |
-          for i in $(seq 1 24); do
-            curl -sS -m 25 "https://grapp-bridge-production.up.railway.app/dpmlb" -o d.json || true
-            node -e 'try{const d=JSON.parse(require("fs").readFileSync("d.json"));const r=d.filter(v=>v.run!=null).length;console.log("PG try '"$i"' vozů",d.length,"s_run",r);if(d.length&&r>=Math.ceil(d.length*0.6)){const v=d.find(x=>x.run!=null);console.log("PG OK",v.line,"run",v.run,"zast#",v.stopIndex,"cíl",v.destination);process.exit(0)}}catch(e){console.log("PG try '"$i"' ERR")}process.exit(1)' && exit 0
-            sleep 35
-          done
-          echo "PG nedotáhlo"
+          curl -sS -m 25 -o /dev/null -w "PG pages 265162 %{http_code} %{size_download}B\n" "https://hoermalmeister.github.io/kdejemujbus-bridge/match/265162.json"
+          curl -sS -m 20 "https://preparator.eternal.cz/services/mboleslav/bus_positions?guid=146&ext=MBoleslav2" > live.xml
+          node --input-type=module -e '
+          import {parseDpmlbVehicles} from "./lib/dpmlbParser.js";
+          import {matchDpmlb} from "./lib/dpmlbMatch.js";
+          import {readFileSync} from "fs";
+          const v=parseDpmlbVehicles(readFileSync("live.xml","utf8"));
+          console.log("PG tituly",[...new Set(v.map(x=>x.line+":"+x.fullLine))].join(" "));
+          let ok=0;for(const b of v){const m=await matchDpmlb(b.fullLine,b.lat,b.lng,b.delay||0);if(m)ok++;
+            if(b.fullLine==="265162"||b.line==="62")console.log("PG L62",b.line,b.fullLine,m?("run "+m.run+" zast#"+m.stopIndex):"NULL","cíl",b.destination,"zpozd",b.delay);}
+          console.log("PG shrnutí",ok,"/",v.length);'
