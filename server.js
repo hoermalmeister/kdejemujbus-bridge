@@ -1134,7 +1134,12 @@ app.get('/dpmlb', positionRoute('/dpmlb', async () => {
     await Promise.all(vehicles.map(async (vehicle) => {
         if (!vehicle.fullLine) return;
         const match = await matchDpmlb(vehicle.fullLine, vehicle.lat, vehicle.lng, vehicle.delay || 0);
-        if (match) Object.assign(vehicle, match);
+        if (match) {
+            vehicle.run = match.run;
+            vehicle.stopIndex = match.stopIndex;
+            // Směr vezmeme z dopočteného spoje, když ho zdroj neposlal (linky zadané číslem)
+            if (!vehicle.destination && match.hs) vehicle.destination = match.hs;
+        }
     }));
     return vehicles;
 }));

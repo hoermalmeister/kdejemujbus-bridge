@@ -127,7 +127,7 @@ def seconds(text):
     return int(h) * 3600 + int(m) * 60 + int(s)
 
 
-def write_realtime(archive, timetable_trips, match_trips, match_mask, base, out_dir):
+def write_realtime(archive, timetable_trips, match_trips, match_head, match_mask, base, out_dir):
     """Jedním průchodem stop_times.txt vytvoří jízdní řády i párovací data.
     timetable_trips: trip_id -> (linka, spoj); match_trips: trip_id -> (linka, spoj)."""
     wanted = set(timetable_trips) | set(match_trips)
@@ -167,7 +167,8 @@ def write_realtime(archive, timetable_trips, match_trips, match_mask, base, out_
             lats.append(round(float(coords[sid][0]), 5))
             lons.append(round(float(coords[sid][1]), 5))
         if len(times) >= 2:
-            by_line[line].append({'run': run, 'days': match_mask[(line, run)], 't': times, 'la': lats, 'lo': lons})
+            by_line[line].append({'run': run, 'days': match_mask[(line, run)],
+                                  'hs': match_head.get(trip_id, ''), 't': times, 'la': lats, 'lo': lons})
     if by_line:
         match_dir = os.path.join(out_dir, 'match')
         os.makedirs(match_dir, exist_ok=True)
@@ -188,6 +189,7 @@ def main(feed_path, out_dir):
         timetable_trips = {}
         seen_timetables = set()
         match_trips = {}
+        match_head = {}
         match_seen = set()
         match_mask = defaultdict(int)
         total = 0
@@ -209,10 +211,11 @@ def main(feed_path, out_dir):
                 if (line, run) not in match_seen:
                     match_seen.add((line, run))
                     match_trips[row['trip_id']] = (line, run)
+                    match_head[row['trip_id']] = row.get('trip_headsign', '')
         print(f'Spojů celkem: {total}, linek v okně: {len(lines)}, tvarů: {len(wanted)}', flush=True)
 
         shapes = read_shapes(archive, wanted)
-        write_realtime(archive, timetable_trips, match_trips, match_mask, base, out_dir)
+        write_realtime(archive, timetable_trips, match_trips, match_head, match_mask, base, out_dir)
 
     routes_dir = os.path.join(out_dir, 'routes')
     os.makedirs(routes_dir, exist_ok=True)
