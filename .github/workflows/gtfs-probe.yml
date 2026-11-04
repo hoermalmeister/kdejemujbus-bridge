@@ -5,13 +5,13 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 4
     steps:
-      - name: Wait prod
+      - name: prod
         run: |
-          for i in $(seq 1 12); do
-            curl -sS -m 25 "https://grapp-bridge-production.up.railway.app/dpmlb" -o d.json || true
-            node -e 'try{const d=JSON.parse(require("fs").readFileSync("d.json"));const r=d.filter(v=>v.run!=null).length;console.log("PG try '"$i"' vozů",d.length,"s_run",r);if(r>0){const v=d.find(x=>x.run!=null);console.log("PG OK",v.line,"run",v.run,"zast#",v.stopIndex,"cíl",v.destination,"zpozd",v.delay);process.exit(0)}}catch(e){console.log("PG try '"$i"' ERR")}process.exit(1)' && exit 0
-            sleep 35
+          for i in 1 2 3; do
+            curl -sS -m 25 "https://grapp-bridge-production.up.railway.app/dpmlb" -o d.json
+            node -e 'const d=JSON.parse(require("fs").readFileSync("d.json"));console.log("PG try '"$i"' vozů",d.length,"s_run",d.filter(v=>v.run!=null).length)'
+            sleep 15
           done
-          echo "PG stále bez spoje"
+          node -e 'const d=JSON.parse(require("fs").readFileSync("d.json"));for(const v of d.slice(0,6))console.log("PG v",v.line,"run",v.run??"-","zast#"+(v.stopIndex??"-"),"cíl",v.destination)'
