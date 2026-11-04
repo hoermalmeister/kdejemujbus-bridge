@@ -23,7 +23,9 @@ from datetime import date, timedelta
 
 WINDOW_DAYS = 8
 TOLERANCE_M = 10.0
-TIMETABLE_LINE_PREFIXES = ('6050',)
+TIMETABLE_LINE_PREFIXES = ('6050', '2651')
+# Linky, pro které navíc ukládáme data k dopočtu spoje z polohy a času (DPMLB)
+MATCH_LINE_PREFIXES = ('2651',)
 
 
 def rows(archive, name):
@@ -120,28 +122,60 @@ def read_shapes(archive, wanted):
     return encoded
 
 
-def write_timetables(archive, wanted_trips, out_dir):
-    """wanted_trips: trip_id -> (linka, spoj). Jezdí-li spoj ve více variantách, stačí první."""
-    if not wanted_trips:
+def seconds(text):
+    h, m, s = text.split(':')
+    return int(h) * 3600 + int(m) * 60 + int(s)
+
+
+def write_realtime(archive, timetable_trips, match_trips, match_mask, base, out_dir):
+    """Jedním průchodem stop_times.txt vytvoří jízdní řády i párovací data.
+    timetable_trips: trip_id -> (linka, spoj); match_trips: trip_id -> (linka, spoj)."""
+    wanted = set(timetable_trips) | set(match_trips)
+    if not wanted:
         return
-    names = {row['stop_id']: row['stop_name'] for row in rows(archive, 'stops.txt')}
+    names, coords = {}, {}
+    for row in rows(archive, 'stops.txt'):
+        names[row['stop_id']] = row['stop_name']
+        coords[row['stop_id']] = (row['stop_lat'], row['stop_lon'])
     stops = defaultdict(list)
     for row in rows(archive, 'stop_times.txt'):
-        if row['trip_id'] in wanted_trips:
+        if row['trip_id'] in wanted:
             stops[row['trip_id']].append((
                 int(row['stop_sequence']),
-                names.get(row['stop_id'], row['stop_id']),
-                row['arrival_time'][:5],
-                row['departure_time'][:5]
+                row['arrival_time'],
+                row['departure_time'],
+                row['stop_id']
             ))
+
     timetable_dir = os.path.join(out_dir, 'timetables')
     os.makedirs(timetable_dir, exist_ok=True)
-    for trip_id, entries in stops.items():
-        line, run = wanted_trips[trip_id]
-        payload = [{'name': name, 'arr': arr, 'dep': dep} for _, name, arr, dep in sorted(entries)]
+    for trip_id, (line, run) in timetable_trips.items():
+        payload = [{'name': names.get(sid, sid), 'arr': arr[:5], 'dep': dep[:5]}
+                   for _, arr, dep, sid in sorted(stops[trip_id])]
         with open(os.path.join(timetable_dir, f'{line}_{run}.json'), 'w', encoding='utf-8') as handle:
             json.dump(payload, handle, ensure_ascii=False, separators=(',', ':'))
-    print(f'Jízdních řádů: {len(stops)}', flush=True)
+    print(f'Jízdních řádů: {len(timetable_trips)}', flush=True)
+
+    # Párovací data: pro každou linku seznam spojů se zastávkami (čas odjezdu v sekundách + souřadnice)
+    by_line = defaultdict(list)
+    for trip_id, (line, run) in match_trips.items():
+        times, lats, lons = [], [], []
+        for _, _, dep, sid in sorted(stops[trip_id]):
+            if sid not in coords:
+                continue
+            times.append(seconds(dep))
+            lats.append(round(float(coords[sid][0]), 5))
+            lons.append(round(float(coords[sid][1]), 5))
+        if len(times) >= 2:
+            by_line[line].append({'run': run, 'days': match_mask[(line, run)], 't': times, 'la': lats, 'lo': lons})
+    if by_line:
+        match_dir = os.path.join(out_dir, 'match')
+        os.makedirs(match_dir, exist_ok=True)
+        for line, trips in by_line.items():
+            payload = {'base': base.strftime('%Y%m%d'), 'trips': trips}
+            with open(os.path.join(match_dir, f'{line}.json'), 'w', encoding='utf-8') as handle:
+                json.dump(payload, handle, ensure_ascii=False, separators=(',', ':'))
+        print(f'Párovacích linek: {len(by_line)}', flush=True)
 
 
 def main(feed_path, out_dir):
@@ -153,6 +187,9 @@ def main(feed_path, out_dir):
         wanted = set()
         timetable_trips = {}
         seen_timetables = set()
+        match_trips = {}
+        match_seen = set()
+        match_mask = defaultdict(int)
         total = 0
         for row in rows(archive, 'trips.txt'):
             total += 1
@@ -167,10 +204,15 @@ def main(feed_path, out_dir):
             if line.startswith(TIMETABLE_LINE_PREFIXES) and (line, run) not in seen_timetables:
                 seen_timetables.add((line, run))
                 timetable_trips[row['trip_id']] = (line, run)
+            if line.startswith(MATCH_LINE_PREFIXES):
+                match_mask[(line, run)] |= mask
+                if (line, run) not in match_seen:
+                    match_seen.add((line, run))
+                    match_trips[row['trip_id']] = (line, run)
         print(f'Spojů celkem: {total}, linek v okně: {len(lines)}, tvarů: {len(wanted)}', flush=True)
 
         shapes = read_shapes(archive, wanted)
-        write_timetables(archive, timetable_trips, out_dir)
+        write_realtime(archive, timetable_trips, match_trips, match_mask, base, out_dir)
 
     routes_dir = os.path.join(out_dir, 'routes')
     os.makedirs(routes_dir, exist_ok=True)
