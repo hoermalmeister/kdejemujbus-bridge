@@ -5,26 +5,34 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 4
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: feat/tsmk }
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm install --silent
-      - name: server
+      - name: dszo
         run: |
-          PORT=3999 node server.js > s.log 2>&1 &
-          sleep 8
+          H=(-H 'Referer: https://www.dszo.cz/online/' -H 'X-Requested-With: XMLHttpRequest' -H 'User-Agent: Mozilla/5.0')
+          curl -sS -m 20 "${H[@]}" "https://www.dszo.cz/online/actualise.php" > a.json
+          curl -sS -m 20 "${H[@]}" "https://www.dszo.cz/online/tabs2.php?_=$(date +%s)000" > t.json
           node -e '
-          (async()=>{const B="http://localhost:3999";
-          const d=await (await fetch(`${B}/tsmk`)).json();
-          console.log("PG tsmk",Array.isArray(d)?d.length:JSON.stringify(d).slice(0,120));
-          if(Array.isArray(d)&&d.length){console.log("PG v0",JSON.stringify(d[0]));
-          console.log("PG heading",d.filter(v=>v.heading!=null).length,"delaynull",d.filter(v=>v.delay==null).length);
-          const v=d[0];
-          const t=await (await fetch(`${B}/tsmk/trip?line=${v.line}&connection=${v.run}`)).json();
-          console.log("PG trip",v.line,v.run,"stops",t.stops?.length,"shape",t.shape?.length,JSON.stringify(t.stops?.slice(0,2)),JSON.stringify(t.shape?.slice(0,2)));
-          const idx=t.stops?.findIndex(s=>s.id===v.stopNumber);console.log("PG curIdx",idx,"stopNumber",v.stopNumber,"stop",v.stop);
-          }})()'
-          grep -iE "tsmk|error|chyba" s.log | head -4 | sed 's/^/PG log /'
+          const a=JSON.parse(require("fs").readFileSync("a.json"));
+          console.log("PG features",a.features?.length);
+          const f=a.features[0];const p=f.properties;
+          console.log("PG p0",JSON.stringify({coords:f.geometry.coordinates,id:p.id,line:p.line,azimut:p.azimut,delay:p.delay,station:p.station,lowlevel:p.lowlevel}));
+          const stop=(p.infow.match(/Zastávka: <strong>([^<]+)</)||[])[1];console.log("PG stopName",stop);
+          const t=JSON.parse(require("fs").readFileSync("t.json"));
+          console.log("PG tabs rows",t.data?.length,"row0",JSON.stringify(t.data[0]));
+          // najdi v tabs řádek pro p.id
+          const tr=t.data.find(r=>r[0]===p.id);console.log("PG tabsForVeh",JSON.stringify(tr));
+          '
+          # zkus spoj.php se station z actualise
+          VUZ=$(node -e 'const a=JSON.parse(require("fs").readFileSync("a.json"));const p=a.features[0].properties;console.log(p.id+" "+p.station+" "+p.delay+" "+p.lowlevel)')
+          set -- $VUZ
+          echo "PG spojparams vuz=$1 zast=$2 zpozdeni=$3 nizkopodlazni=$4"
+          curl -sS -m 20 "${H[@]}" "https://www.dszo.cz/online/spoj.php?vuz=$1&zast=$2&zpozdeni=$3&nizkopodlazni=$4" > s.html
+          wc -c s.html | sed 's/^/PG spojsize /'
+          node -e '
+          const h=require("fs").readFileSync("s.html","utf8");
+          const line=(h.match(/<h4>([^<]+)</)||[])[1];console.log("PG spojLine",line);
+          const rows=[...h.matchAll(/<tr class="([^"]*)">[\s\S]*?<strong>([^<]+)<\/strong>[\s\S]*?<td[^>]*>([\s\S]*?)<\/td>/g)];
+          console.log("PG rows",rows.length);
+          for(const r of rows.slice(0,3).concat(rows.filter(x=>x[1].includes("aktivni")))){const nm=r[3].replace(/<[^>]+>/g,"").replace(/&nbsp;/g,"").trim();console.log("PG row",JSON.stringify(r[1]),r[2],nm);}
+          '
