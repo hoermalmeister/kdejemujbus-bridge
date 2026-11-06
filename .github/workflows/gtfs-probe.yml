@@ -19,13 +19,11 @@ jobs:
           node -e '
           (async()=>{const B="http://localhost:3999";
           const d=await (await fetch(`${B}/dszo`)).json();
-          console.log("PG dszo",Array.isArray(d)?d.length:JSON.stringify(d).slice(0,120));
-          if(Array.isArray(d)&&d.length){
-            console.log("PG heading",d.filter(v=>v.heading!=null).length,"dest",d.filter(v=>v.destination).length,"stop",d.filter(v=>v.stop).length);
-            console.log("PG v0",JSON.stringify(d[0]));
-            const v=d[0];
+          let okActive=0,okMatch=0,n=0;
+          for(const v of d){n++;
             const t=await (await fetch(`${B}/dszo/trip?vuz=${v.vehicle}&zast=${v.station}&zpozdeni=${v.delay}&nizkopodlazni=${v.lowlevel}`)).json();
-            console.log("PG trip stops",t.stops?.length,"active",t.active,JSON.stringify(t.stops?.[t.active]),JSON.stringify(t.stops?.slice(0,2)));
-            console.log("PG aktStop vozu",v.stop);
-          }})()'
-          grep -iE "dszo|error|chyba" s.log | head -4 | sed 's/^/PG log /'
+            if(t.active>=0){okActive++; if(t.stops[t.active]?.name===v.stop) okMatch++;}
+            if(n<=5)console.log("PG v",v.vehicle,"L"+v.line,"stop",v.stop,"| active",t.active,t.stops?.[t.active]?.name||"-","stops",t.stops?.length);
+          }
+          console.log("PG shrnutí n",n,"sAktivní",okActive,"aktivníSedí",okMatch);
+          })()'
