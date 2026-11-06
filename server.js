@@ -9,6 +9,7 @@ import { getTshbVehicles } from './lib/tshbStream.js';
 import { parseDpmdVehicles, parseGpxRoute } from './lib/dpmdParser.js';
 import { createDpmpVehicles, getDpmpTrip } from './lib/dpmpApi.js';
 import { parseDpmlbVehicles } from './lib/dpmlbParser.js';
+import { createTsmkVehicles, getTsmkTrip } from './lib/tsmkApi.js';
 import { matchDpmlb } from './lib/dpmlbMatch.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
@@ -1143,6 +1144,22 @@ app.get('/dpmlb', positionRoute('/dpmlb', async () => {
     }));
     return vehicles;
 }));
+
+// --- 29. TSMK (Kroměříž) ---
+app.get('/tsmk', positionRoute('/tsmk', createTsmkVehicles(calculateBearing)));
+
+app.get('/tsmk/trip', async (req, res) => {
+    try {
+        const { line, connection } = req.query;
+        if (!/^\w+$/.test(line || '') || !/^\d+$/.test(connection || '')) {
+            return res.status(400).json({ error: 'Chybí linka nebo spoj' });
+        }
+        res.json(await getTsmkTrip(line, connection));
+    } catch (error) {
+        console.error('Chyba spoje TSMK:', error.message);
+        res.status(502).json({ error: error.message });
+    }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
