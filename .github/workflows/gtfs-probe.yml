@@ -5,22 +5,26 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
-      - name: idpk
+      - uses: actions/checkout@v4
+        with: { ref: feat/tsmk }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --silent
+      - name: server
         run: |
-          curl -sS -m 20 "https://pvvd.idpk.cz/Ajax/GetPoints" > raw.json
-          curl -sS -m 20 "https://grapp-bridge-production.up.railway.app/idpk" > prod.json
+          PORT=3999 node server.js > s.log 2>&1 &
+          sleep 8
           node -e '
-          const raw=JSON.parse(require("fs").readFileSync("raw.json"));
-          const arr=Array.isArray(raw)?raw:(raw.data||raw.points||[]);
-          const prod=JSON.parse(require("fs").readFileSync("prod.json"));
-          console.log("PG zdroj vozů",arr.length,"| produkce po filtru",Array.isArray(prod)?prod.length:JSON.stringify(prod).slice(0,80));
-          console.log("PG pole vozu",JSON.stringify(arr[0]));
-          // jaké klíče zdroj dává (hledáme příznak mimo provoz/traction)
-          console.log("PG klíče",[...new Set(arr.flatMap(v=>Object.keys(v)))].join(","));
-          const tr={};for(const v of arr){tr[v.traction||"?"]=(tr[v.traction||"?"]||0)+1}
-          console.log("PG traction",JSON.stringify(tr));
-          // kolik má prázdný text/linku
-          console.log("PG bezText",arr.filter(v=>!v.text).length,"bezLatLng",arr.filter(v=>!v.lat||!v.lng).length);
-          '
+          (async()=>{const B="http://localhost:3999";
+          const d=await (await fetch(`${B}/tsmk`)).json();
+          console.log("PG tsmk",Array.isArray(d)?d.length:JSON.stringify(d).slice(0,120));
+          if(Array.isArray(d)&&d.length){console.log("PG v0",JSON.stringify(d[0]));
+          console.log("PG heading",d.filter(v=>v.heading!=null).length,"delaynull",d.filter(v=>v.delay==null).length);
+          const v=d[0];
+          const t=await (await fetch(`${B}/tsmk/trip?line=${v.line}&connection=${v.run}`)).json();
+          console.log("PG trip",v.line,v.run,"stops",t.stops?.length,"shape",t.shape?.length,JSON.stringify(t.stops?.slice(0,2)),JSON.stringify(t.shape?.slice(0,2)));
+          const idx=t.stops?.findIndex(s=>s.id===v.stopNumber);console.log("PG curIdx",idx,"stopNumber",v.stopNumber,"stop",v.stop);
+          }})()'
+          grep -iE "tsmk|error|chyba" s.log | head -4 | sed 's/^/PG log /'
