@@ -5,29 +5,38 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
-      - name: dpmhk
+      - name: map
         run: |
           B=https://dpmhk.qrbus.me/index
           H=(-H 'referer: https://dpmhk.qrbus.me/' -H 'x-requested-with: XMLHttpRequest' -H 'user-agent: Mozilla/5.0')
           curl -sS -m 20 "${H[@]}" "$B/getAllRtdVehicles" > v.json
-          wc -c v.json | sed 's/^/PG size /'
+          curl -sS -m 30 "${H[@]}" "$B/getAllLines" > lines.json
+          curl -sS -m 20 "${H[@]}" "$B/getAllStops" > stops.json
           node -e '
-          const d=JSON.parse(require("fs").readFileSync("v.json")).vehicles||[];
-          console.log("PG vozů",d.length);
-          const act=d.filter(v=>v.gpsi===0&&v.vp===1);
-          console.log("PG aktivních(gpsi0,vp1)",act.length);
-          const v=act[0];
-          console.log("PG v0",JSON.stringify({vid:v.vid,ln:v.ln,li:v.li,la:v.la,lo:v.lo,az:v.az,d:v.d,psi:v.psi,rn:v.rn,o:v.o,tn:v.tn,b:v.b,s:v.s}));
-          console.log("PG coords",v.la/1e5,v.lo/1e5);
+          (async()=>{
+          const veh=JSON.parse(require("fs").readFileSync("v.json")).vehicles.filter(v=>v.gpsi===0&&v.vp===1);
+          const cat=JSON.parse(require("fs").readFileSync("lines.json"));
+          const lines=cat.lines||cat;
+          console.log("PG lines",lines.length,"sample keys",Object.keys(lines[0]).join(","));
+          // index lineId -> {routeName -> {id,endName}}
+          const idx=new Map();
+          for(const L of lines){const m=new Map();for(const r of L.routes||[])m.set(String(r.name),{id:r.id,endName:r.endName||r.endName2});idx.set(L.id,{end:L.endName,routes:m});}
+          let hit=0,both=0;const ex=[];
+          for(const v of veh){const L=idx.get(v.psi);if(!L)continue;const r=L.routes.get(String(v.rn));if(r){both++;if(ex.length<5)ex.push(`${v.ln}/${v.rn}->route ${r.id} cíl ${r.endName||L.end}`);}if(L)hit++;}
+          console.log("PG lineHit",hit,"/",veh.length,"routeHit",both);
+          ex.forEach(e=>console.log("PG ex",e));
+          // getRoute geometrie pro jeden
+          const v=veh.find(v=>idx.get(v.psi)?.routes.get(String(v.rn)));
+          const rid=idx.get(v.psi).routes.get(String(v.rn)).id;
+          const r=await fetch(`${B}/getRoute`,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded","referer":"https://dpmhk.qrbus.me/","x-requested-with":"XMLHttpRequest"},body:JSON.stringify({lineId:v.psi,routeId:rid})});
+          const g=await r.json();const L=g.lines?.[0];const route=L?.routes?.find(x=>x.id===rid)||L?.routes?.[0];
+          const segs=(route?.segments||[]).slice().sort((a,b)=>a.segmentOrder-b.segmentOrder);
+          let pts=0;for(const s of segs)pts+=(s.points||[]).length;
+          console.log("PG getRoute",r.status,"segmenty",segs.length,"bodů",pts,"cíl",route?.endName);
+          // stops
+          const st=JSON.parse(require("fs").readFileSync("stops.json"));
+          const sarr=st.stops||st;console.log("PG stops",Array.isArray(sarr)?sarr.length:"?","sample",JSON.stringify((sarr[0]||{})).slice(0,120));
+          })()
           '
-          # katalogové endpointy
-          for m in getAllLines getLines getAllRoutes getStops getAllStops; do
-            curl -sS -m 15 "${H[@]}" -o o.txt -w "PG try $m %{http_code} %{size_download}B\n" "$B/$m"
-          done
-          # getRoute pro linku prvního aktivního vozu (routeId zkusíme 0)
-          P=$(node -e 'const d=JSON.parse(require("fs").readFileSync("v.json")).vehicles.filter(v=>v.gpsi===0&&v.vp===1);process.stdout.write(String(d[0].psi))')
-          echo "PG lineId $P"
-          curl -sS -m 20 "${H[@]}" -H 'content-type: application/x-www-form-urlencoded; charset=UTF-8' -H 'origin: https://dpmhk.qrbus.me' --data-raw "{\"lineId\":$P,\"routeId\":0}" "$B/getRoute" -o gr.json -w "PG getRoute(route0) http=%{http_code} size=%{size_download}\n"
-          node -e 'try{const d=JSON.parse(require("fs").readFileSync("gr.json"));const L=d.lines?.[0];console.log("PG line",L?.lineNumber,"routes",L?.routes?.map(r=>r.id+":"+r.name).slice(0,8).join(","))}catch(e){console.log("PG grERR",require("fs").readFileSync("gr.json","utf8").slice(0,100))}'
