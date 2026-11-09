@@ -8,7 +8,7 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
-        with: { ref: feat/portabo2 }
+        with: { ref: feat/portabo3 }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: npm install --silent
@@ -16,17 +16,15 @@ jobs:
         run: |
           curl -fsSL --retry 3 -o feed.zip https://motis.obehy.cz/get-feeds/cz-jdf-gtfs.zip
           python3 scripts/build_route_shapes.py feed.zip site >/dev/null 2>&1
-          echo "PG tt595 $(ls site/timetables|grep -c '^595') tt585 $(ls site/timetables|grep -c '^585')"
+          echo "PG match595 $(ls site/match|grep -c '^595')"
           ( cd site && python3 -m http.server 8000 >/dev/null 2>&1 & ) ; sleep 2
-          PORT=3999 node server.js > s.log 2>&1 &
+          DPMLB_ROUTES_BASE=http://localhost:8000 PORT=3999 node server.js > s.log 2>&1 &
           sleep 8
           node -e '
           (async()=>{const B="http://localhost:3999";
-          for(const [op,ep] of [["DPMÚL","dpmul"],["MDT","mdt"]]){
-            const d=await (await fetch(`${B}/${ep}`)).json();
-            console.log(`PG ${op} n=${d.length} cíl=${d.filter(v=>v.destination).length} zast=${d.filter(v=>v.stop).length} dir=${d.filter(v=>v.heading!=null).length}`);
-            console.log(`PG ${op} v0`,JSON.stringify({line:d[0].line,spoj:d[0].spoj,cis:d[0].cis,dest:d[0].destination,stop:d[0].stop}));
-            let tt=0,rt=0;for(const v of d){const t=await fetch(`http://localhost:8000/timetables/${v.cis}_${v.spoj}.json`).then(r=>r.ok?r.json():null).catch(()=>null);const r=await fetch(`http://localhost:8000/routes/${v.cis}.json`).then(r=>r.ok?r.json():null).catch(()=>null);if(t)tt++;if(r?.trips?.[v.spoj])rt++;}
-            console.log(`PG ${op} řád=${tt}/${d.length} trasa=${rt}/${d.length}`);
-          }})()'
-          grep -iE "portabo|error|chyba" s.log | head -3 | sed 's/^/PG log /'
+          const d=await (await fetch(`${B}/dpmul`)).json();
+          let tt=0,rt=0;const bad=[];
+          for(const v of d){const t=await fetch(`http://localhost:8000/timetables/${v.cis}_${v.spoj}.json`).then(r=>r.ok?r.json():null).catch(()=>null);const r=await fetch(`http://localhost:8000/routes/${v.cis}.json`).then(r=>r.ok?r.json():null).catch(()=>null);if(t)tt++;else bad.push(v.cis+"/"+v.spoj);if(r?.trips?.[v.spoj])rt++;}
+          console.log("PG DPMÚL n",d.length,"řád",tt,"trasa",rt,"bezŘádu",bad.slice(0,6).join(","));
+          })()'
+          grep -iE "error|chyba" s.log | head -3 | sed 's/^/PG log /'
