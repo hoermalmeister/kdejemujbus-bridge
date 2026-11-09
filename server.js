@@ -12,6 +12,7 @@ import { parseDpmlbVehicles } from './lib/dpmlbParser.js';
 import { createTsmkVehicles, getTsmkTrip } from './lib/tsmkApi.js';
 import { getDszoVehicles, getDszoTrip } from './lib/dszoApi.js';
 import { createPortaboVehicles } from './lib/portaboApi.js';
+import { getDpmhkVehicles, getDpmhkRoute } from './lib/dpmhkApi.js';
 import { matchDpmlb } from './lib/dpmlbMatch.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
@@ -1201,6 +1202,24 @@ app.get('/dszo/trip', async (req, res) => {
 // --- 31. DPMÚL (Ústí n. L.) a MDT (Teplice) ze společného feedu Portabo ---
 app.get('/dpmul', positionRoute('/dpmul', createPortaboVehicles('595', calculateBearing, true)));
 app.get('/mdt', positionRoute('/mdt', createPortaboVehicles('585', calculateBearing)));
+
+// --- 32. DPMHK (Hradec Králové, qrbus) ---
+app.get('/dpmhk', positionRoute('/dpmhk', getDpmhkVehicles));
+
+app.get('/dpmhk/route', async (req, res) => {
+    try {
+        const { lineId, routeId } = req.query;
+        if (!/^\d+$/.test(lineId || '') || !/^\d+$/.test(routeId || '')) {
+            return res.status(400).json({ error: 'Chybí lineId nebo routeId' });
+        }
+        const shape = await getDpmhkRoute(lineId, routeId);
+        if (shape.length < 2) return res.status(404).json({ error: 'Trasa není k dispozici' });
+        res.json({ shape });
+    } catch (error) {
+        console.error('Chyba trasy DPMHK:', error.message);
+        res.status(502).json({ error: error.message });
+    }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
