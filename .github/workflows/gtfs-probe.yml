@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: match2
+      - name: vehmatch
         run: |
           B=https://grapp-bridge-production.up.railway.app
           curl -sS -m 20 "$B/dszo" > dszo.json
@@ -16,12 +16,19 @@ jobs:
           const dszo=JSON.parse(require("fs").readFileSync("dszo.json"));
           const idzk=JSON.parse(require("fs").readFileSync("idzk.json"));
           const dsz=idzk.filter(it=>String(it.cr||"").replace(/<[^>]*>/g,"").trim()==="DSZO");
-          console.log("PG DSZO v IDZK",dsz.length);
-          for(const it of dsz.slice(0,6)){const f=String(it.cn||"").split("|");console.log("PG idzkDSZO cn0-3,9,11",JSON.stringify([f[0],f[1],f[2],f[3],f[9],f[11]]),"x,y",it.x,it.y,"cat",it.cat);}
-          console.log("PG dszoSample",dszo.slice(0,4).map(v=>`L${v.line} ${JSON.stringify(v.destination)} @${v.lat.toFixed(4)},${v.lon.toFixed(4)}`).join(" | "));
-          // zkus spárovat podle vzdálenosti bez ohledu na linku
-          function hav(a,b,c,d){const R=6371000,r=Math.PI/180;const dLat=(c-a)*r,dLon=(d-b)*r;const h=Math.sin(dLat/2)**2+Math.cos(a*r)*Math.cos(c*r)*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.sqrt(h))}
-          let near=0;
-          for(const v of dszo){const c=dsz.map(i=>({i,d:hav(v.lat,v.lon,i.x,i.y)})).sort((a,b)=>a.d-b.d)[0];if(c&&c.d<300){near++;const f=String(c.i.cn||"").split("|");if(near<=6)console.log("PG near",v.line,JSON.stringify(v.destination),"->idzk L",f[1],"/",f[2],"dest",JSON.stringify(f[9]),"d="+Math.round(c.d));}}
-          console.log("PG blízko300",near,"/",dszo.length);
+          // mapa Ev.č. -> trip
+          const byVeh=new Map();
+          for(const it of dsz){const f=String(it.cn||"").split("|");const m=/(\d+)/.exec(f[11]||"");if(m)byVeh.set(m[1],{line:f[0],run:f[2],dest:f[9],cat:it.cat});}
+          console.log("PG idzkDSZO",dsz.length,"sČíslem",byVeh.size);
+          let hit=0;const miss=[];
+          for(const v of dszo){const t=byVeh.get(String(v.vehicle));if(t)hit++;else miss.push(v.vehicle+"/L"+v.line);}
+          console.log("PG shoda podle vozu",hit,"/",dszo.length,"chybí",miss.slice(0,8).join(","));
+          // ukázka + test trasy z IDZK
+          const sample=dszo.find(v=>byVeh.get(String(v.vehicle)));
+          const t=byVeh.get(String(sample.vehicle));
+          console.log("PG ukázka vůz",sample.vehicle,"L"+sample.line,JSON.stringify(sample.destination),"-> idzk",JSON.stringify(t));
+          const u=`${B}/mpv/zlin/route?num1=${t.line}&num2=${t.run}&cat=${t.cat}`;
+          const r=await fetch(u);const txt=await r.text();
+          let shape=null;try{shape=JSON.parse(txt).shape}catch(e){}
+          console.log("PG trasa",r.status,"shape",shape?shape.length:("rawlen "+txt.length),shape?JSON.stringify(shape.slice(0,2)):txt.slice(0,100));
           '
