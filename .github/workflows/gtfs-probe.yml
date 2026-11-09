@@ -13,22 +13,22 @@ jobs:
           curl -sS -m 20 "$B/dszo" > dszo.json
           curl -sS -m 20 "$B/mpv/zlin" > idzk.json
           node -e '
+          (async()=>{
           const dszo=JSON.parse(require("fs").readFileSync("dszo.json"));
           const idzk=JSON.parse(require("fs").readFileSync("idzk.json"));
           const dsz=idzk.filter(it=>String(it.cr||"").replace(/<[^>]*>/g,"").trim()==="DSZO");
-          // mapa Ev.č. -> trip
           const byVeh=new Map();
           for(const it of dsz){const f=String(it.cn||"").split("|");const m=/(\d+)/.exec(f[11]||"");if(m)byVeh.set(m[1],{line:f[0],run:f[2],dest:f[9],cat:it.cat});}
           console.log("PG idzkDSZO",dsz.length,"sČíslem",byVeh.size);
           let hit=0;const miss=[];
           for(const v of dszo){const t=byVeh.get(String(v.vehicle));if(t)hit++;else miss.push(v.vehicle+"/L"+v.line);}
           console.log("PG shoda podle vozu",hit,"/",dszo.length,"chybí",miss.slice(0,8).join(","));
-          // ukázka + test trasy z IDZK
           const sample=dszo.find(v=>byVeh.get(String(v.vehicle)));
           const t=byVeh.get(String(sample.vehicle));
           console.log("PG ukázka vůz",sample.vehicle,"L"+sample.line,JSON.stringify(sample.destination),"-> idzk",JSON.stringify(t));
           const u=`${B}/mpv/zlin/route?num1=${t.line}&num2=${t.run}&cat=${t.cat}`;
           const r=await fetch(u);const txt=await r.text();
           let shape=null;try{shape=JSON.parse(txt).shape}catch(e){}
-          console.log("PG trasa",r.status,"shape",shape?shape.length:("rawlen "+txt.length),shape?JSON.stringify(shape.slice(0,2)):txt.slice(0,100));
+          console.log("PG trasa",r.status,"shape",shape?shape.length:("rawlen "+txt.length),shape?JSON.stringify(shape.slice(0,2)):txt.slice(0,120));
+          })()
           '
