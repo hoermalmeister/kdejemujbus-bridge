@@ -5,25 +5,30 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 4
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: feat/dszo }
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm install --silent
-      - name: server
+      - name: portabo
         run: |
-          PORT=3999 node server.js > s.log 2>&1 &
-          sleep 8
+          B=https://tabule.portabo.cz/api/v1-tabule/cis
+          curl -sS -m 20 "$B/GetTraffic/0" > t.json
+          wc -c t.json | sed 's/^/PG size /'
           node -e '
-          (async()=>{const B="http://localhost:3999";
-          const d=await (await fetch(`${B}/dszo`)).json();
-          let okActive=0,okMatch=0,n=0;
-          for(const v of d){n++;
-            const t=await (await fetch(`${B}/dszo/trip?vuz=${v.vehicle}&zast=${v.station}&zpozdeni=${v.delay}&nizkopodlazni=${v.lowlevel}`)).json();
-            if(t.active>=0){okActive++; if(t.stops[t.active]?.name===v.stop) okMatch++;}
-            if(n<=5)console.log("PG v",v.vehicle,"L"+v.line,"stop",v.stop,"| active",t.active,t.stops?.[t.active]?.name||"-","stops",t.stops?.length);
-          }
-          console.log("PG shrnutí n",n,"sAktivní",okActive,"aktivníSedí",okMatch);
-          })()'
+          const d=JSON.parse(require("fs").readFileSync("t.json")).VehicleList||[];
+          console.log("PG vozů",d.length);
+          const pref={};for(const v of d){const p=String(v.CISLineID).slice(0,3);pref[p]=(pref[p]||0)+1}
+          console.log("PG prefixy",JSON.stringify(pref));
+          const states={};for(const v of d){states[v.State]=(states[v.State]||0)+1}
+          console.log("PG states",JSON.stringify(states));
+          console.log("PG nullpos",d.filter(v=>v.Longitude==null||v.Latitude==null).length,"nullAz",d.filter(v=>v.Azimut==null).length);
+          const ids={};for(const v of d)ids[v.ID]=(ids[v.ID]||0)+1;
+          const dups=Object.entries(ids).filter(([,c])=>c>1);
+          console.log("PG dupID",dups.length,JSON.stringify(dups.slice(0,5)));
+          const s595=d.find(v=>String(v.CISLineID).startsWith("595"));
+          const s585=d.find(v=>String(v.CISLineID).startsWith("585"));
+          console.log("PG 595",JSON.stringify({line:s595.qride_linename,cis:s595.CISLineID,route:s595.RouteID,trip:s595.qride_tripID,az:s595.Azimut,delay:s595.Delay,final:s595.FinalNode,arr:s595.ArrivalDT,dep:s595.TODepartureDT}));
+          console.log("PG 585",JSON.stringify({line:s585.qride_linename,cis:s585.CISLineID,route:s585.RouteID,trip:s585.qride_tripID,az:s585.Azimut,delay:s585.Delay,final:s585.FinalNode}));
+          '
+          # zkus endpointy s názvy zastávek
+          for m in GetStations GetStops GetStationList GetNodes Stations GetStation GetTimetable; do
+            curl -sS -m 15 -o o.txt -w "PG try $m %{http_code} %{size_download}B\n" "$B/$m/0"
+          done
