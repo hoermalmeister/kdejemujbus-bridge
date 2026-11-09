@@ -7,28 +7,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: vehmatch
+      - name: route
         run: |
           B=https://grapp-bridge-production.up.railway.app
-          curl -sS -m 20 "$B/dszo" > dszo.json
           curl -sS -m 20 "$B/mpv/zlin" > idzk.json
           node -e '
           (async()=>{
-          const dszo=JSON.parse(require("fs").readFileSync("dszo.json"));
           const idzk=JSON.parse(require("fs").readFileSync("idzk.json"));
-          const dsz=idzk.filter(it=>String(it.cr||"").replace(/<[^>]*>/g,"").trim()==="DSZO");
-          const byVeh=new Map();
-          for(const it of dsz){const f=String(it.cn||"").split("|");const m=/(\d+)/.exec(f[11]||"");if(m)byVeh.set(m[1],{line:f[0],run:f[2],dest:f[9],cat:it.cat});}
-          console.log("PG idzkDSZO",dsz.length,"sČíslem",byVeh.size);
-          let hit=0;const miss=[];
-          for(const v of dszo){const t=byVeh.get(String(v.vehicle));if(t)hit++;else miss.push(v.vehicle+"/L"+v.line);}
-          console.log("PG shoda podle vozu",hit,"/",dszo.length,"chybí",miss.slice(0,8).join(","));
-          const sample=dszo.find(v=>byVeh.get(String(v.vehicle)));
-          const t=byVeh.get(String(sample.vehicle));
-          console.log("PG ukázka vůz",sample.vehicle,"L"+sample.line,JSON.stringify(sample.destination),"-> idzk",JSON.stringify(t));
-          const u=`${B}/mpv/zlin/route?num1=${t.line}&num2=${t.run}&cat=${t.cat}`;
-          const r=await fetch(u);const txt=await r.text();
-          let shape=null;try{shape=JSON.parse(txt).shape}catch(e){}
-          console.log("PG trasa",r.status,"shape",shape?shape.length:("rawlen "+txt.length),shape?JSON.stringify(shape.slice(0,2)):txt.slice(0,120));
+          const pick=(cr)=>{const it=idzk.find(x=>String(x.cr||"").replace(/<[^>]*>/g,"").trim()===cr && !x.external);const f=String(it.cn||"").split("|");return {line:f[0],run:f[2],cat:it.cat,dest:f[9]};};
+          for(const cr of ["DSZO","ARRIVA, pr. Zlín"]){
+            const t=pick(cr);
+            const u=`${B}/mpv/zlin/route?num1=${t.line}&num2=${t.run}&cat=${t.cat}`;
+            try{const r=await fetch(u);const txt=await r.text();let sh=null;try{sh=JSON.parse(txt).shape}catch(e){}
+            console.log("PG",cr,"L"+t.line+"/"+t.run+" cat"+t.cat,"->",r.status,"shape",sh?sh.length:("raw:"+txt.slice(0,80)));}
+            catch(e){console.log("PG",cr,"ERR",String(e).slice(0,80))}
+          }
           })()
           '
