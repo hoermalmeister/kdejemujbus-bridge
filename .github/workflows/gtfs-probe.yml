@@ -5,30 +5,40 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 8
     steps:
-      - name: portabo
+      - name: align
         run: |
-          B=https://tabule.portabo.cz/api/v1-tabule/cis
-          curl -sS -m 20 "$B/GetTraffic/0" > t.json
-          wc -c t.json | sed 's/^/PG size /'
-          node -e '
-          const d=JSON.parse(require("fs").readFileSync("t.json")).VehicleList||[];
-          console.log("PG vozů",d.length);
-          const pref={};for(const v of d){const p=String(v.CISLineID).slice(0,3);pref[p]=(pref[p]||0)+1}
-          console.log("PG prefixy",JSON.stringify(pref));
-          const states={};for(const v of d){states[v.State]=(states[v.State]||0)+1}
-          console.log("PG states",JSON.stringify(states));
-          console.log("PG nullpos",d.filter(v=>v.Longitude==null||v.Latitude==null).length,"nullAz",d.filter(v=>v.Azimut==null).length);
-          const ids={};for(const v of d)ids[v.ID]=(ids[v.ID]||0)+1;
-          const dups=Object.entries(ids).filter(([,c])=>c>1);
-          console.log("PG dupID",dups.length,JSON.stringify(dups.slice(0,5)));
-          const s595=d.find(v=>String(v.CISLineID).startsWith("595"));
-          const s585=d.find(v=>String(v.CISLineID).startsWith("585"));
-          console.log("PG 595",JSON.stringify({line:s595.qride_linename,cis:s595.CISLineID,route:s595.RouteID,trip:s595.qride_tripID,az:s595.Azimut,delay:s595.Delay,final:s595.FinalNode,arr:s595.ArrivalDT,dep:s595.TODepartureDT}));
-          console.log("PG 585",JSON.stringify({line:s585.qride_linename,cis:s585.CISLineID,route:s585.RouteID,trip:s585.qride_tripID,az:s585.Azimut,delay:s585.Delay,final:s585.FinalNode}));
-          '
-          # zkus endpointy s názvy zastávek
-          for m in GetStations GetStops GetStationList GetNodes Stations GetStation GetTimetable; do
-            curl -sS -m 15 -o o.txt -w "PG try $m %{http_code} %{size_download}B\n" "$B/$m/0"
-          done
+          curl -sS -m 20 "https://tabule.portabo.cz/api/v1-tabule/cis/GetTraffic/0" > t.json
+          curl -fsSL --retry 3 -o feed.zip https://motis.obehy.cz/get-feeds/cz-jdf-gtfs.zip
+          python3 - <<'PY'
+          import json,zipfile,csv,io,collections
+          d=json.load(open("t.json"))["VehicleList"]
+          def spoj(v): return v["qride_tripID"].split("-")[-1]
+          want={}  # (line,spoj) -> count
+          for v in d:
+              c=str(v["CISLineID"])
+              if c.startswith(("595","585")):
+                  want[(c,spoj(v))]=want.get((c,spoj(v)),0)+1
+          print("PG párů",len(want),"595",sum(1 for k in want if k[0].startswith("595")),"585",sum(1 for k in want if k[0].startswith("585")))
+          z=zipfile.ZipFile("feed.zip")
+          def rows(n):
+              with z.open(n) as r: yield from csv.DictReader(io.TextIOWrapper(r,encoding="utf-8-sig"))
+          names={}  # trip_short_name set for 595/585
+          shorts=set()
+          heads={}
+          for t in rows("trips.txt"):
+              sn=t.get("trip_short_name","")
+              p=sn.split()
+              if len(p)==2 and p[0].startswith(("595","585")):
+                  shorts.add((p[0],p[1])); heads[(p[0],p[1])]=t.get("trip_headsign","")
+          print("PG GTFS 595/585 spojů",len(shorts))
+          hit=[k for k in want if k in shorts]
+          print("PG shoda",len(hit),"/",len(want))
+          miss595=[k for k in want if k[0].startswith("595") and k not in shorts][:5]
+          miss585=[k for k in want if k[0].startswith("585") and k not in shorts][:5]
+          print("PG miss595",miss595)
+          print("PG miss585",miss585)
+          for k in hit[:4]:
+              print("PG hit",k,"->",heads.get(k))
+          PY
