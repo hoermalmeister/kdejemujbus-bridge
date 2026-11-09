@@ -1164,7 +1164,26 @@ app.get('/tsmk/trip', async (req, res) => {
 });
 
 // --- 30. DSZO (Zlín–Otrokovice) ---
-app.get('/dszo', positionRoute('/dszo', getDszoVehicles));
+app.get('/dszo', positionRoute('/dszo', async () => {
+    // DSZO nemá čísla spojů ani trasy; vezmeme je z IDZK (mpvnet/zlin), kde jsou vozy DSZO
+    // vedené s evidenčním číslem v cn[11]. Párujeme přesně podle čísla vozu.
+    const [vehicles, idzk] = await Promise.all([
+        getDszoVehicles(),
+        postMpv('zlin', 'map/mapData', MPV_BOUNDS).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    ]);
+    const byVehicle = new Map();
+    for (const item of idzk?.transmitters || []) {
+        if (String(item.cr || '').replace(/<[^>]*>/g, '').trim() !== 'DSZO') continue;
+        const fields = String(item.cn || '').split('|');
+        const number = /(\d+)/.exec(fields[11] || '');
+        if (number) byVehicle.set(number[1], { line: fields[0], run: fields[2], cat: item.cat });
+    }
+    for (const vehicle of vehicles) {
+        const trip = byVehicle.get(String(vehicle.vehicle));
+        if (trip) { vehicle.idzk = trip; vehicle.spoj = trip.run; }
+    }
+    return vehicles;
+}));
 
 app.get('/dszo/trip', async (req, res) => {
     try {
