@@ -11,6 +11,7 @@ import { createDpmpVehicles, getDpmpTrip } from './lib/dpmpApi.js';
 import { parseDpmlbVehicles } from './lib/dpmlbParser.js';
 import { createTsmkVehicles, getTsmkTrip } from './lib/tsmkApi.js';
 import { getDszoVehicles, getDszoTrip } from './lib/dszoApi.js';
+import { createPortaboVehicles } from './lib/portaboApi.js';
 import { matchDpmlb } from './lib/dpmlbMatch.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
@@ -1177,6 +1178,10 @@ app.get('/dszo/trip', async (req, res) => {
         res.status(502).json({ error: error.message });
     }
 });
+
+// --- 31. DPMÚL (Ústí n. L.) a MDT (Teplice) ze společného feedu Portabo ---
+app.get('/dpmul', positionRoute('/dpmul', createPortaboVehicles('595', calculateBearing)));
+app.get('/mdt', positionRoute('/mdt', createPortaboVehicles('585', calculateBearing)));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
