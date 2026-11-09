@@ -5,13 +5,26 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
-      - name: route
+      - uses: actions/checkout@v4
+        with: { ref: feat/dszo-idzk }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --silent
+      - name: server
         run: |
-          B=https://grapp-bridge-production.up.railway.app
-          curl -sS -m 20 "$B/mpv/zlin" > idzk.json
-          P=$(node -e 'const z=JSON.parse(require("fs").readFileSync("idzk.json"));const it=z.find(x=>String(x.cr||"").replace(/<[^>]*>/g,"").trim()==="DSZO");const f=String(it.cn||"").split("|");process.stdout.write(f[0]+" "+f[2]+" "+it.cat)')
-          set -- $P; echo "PG params L$1 run$2 cat$3"
-          curl -sS -m 25 "$B/mpv/zlin/route?num1=$1&num2=$2&cat=$3" -o r.json -w "PG route http=%{http_code} size=%{size_download} time=%{time_total}\n"
-          node -e 'let d=null;try{d=JSON.parse(require("fs").readFileSync("r.json"))}catch(e){};console.log("PG shape",d&&d.shape?d.shape.length:"žádný",d&&d.shape?JSON.stringify(d.shape.slice(0,2)):require("fs").readFileSync("r.json","utf8").slice(0,100))'
+          PORT=3999 node server.js > s.log 2>&1 &
+          sleep 8
+          node -e '
+          (async()=>{const B="http://localhost:3999";
+          const d=await (await fetch(`${B}/dszo`)).json();
+          const withIdzk=d.filter(v=>v.idzk);
+          console.log("PG dszo",d.length,"sIDZK",withIdzk.length);
+          console.log("PG v0",JSON.stringify(withIdzk[0]));
+          const v=withIdzk[0];
+          const q=new URLSearchParams({num1:v.idzk.line,num2:v.idzk.run,cat:v.idzk.cat}).toString();
+          const r=await fetch(`${B}/mpv/zlin/route?${q}`);const t=await r.json();
+          console.log("PG trasa",r.status,"shape",t.shape?.length,"spoj",v.spoj);
+          })()'
+          grep -iE "dszo|error|chyba" s.log | head -3 | sed 's/^/PG log /'
