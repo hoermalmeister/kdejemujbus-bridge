@@ -1180,7 +1180,7 @@ app.get('/dszo/trip', async (req, res) => {
 });
 
 // --- 31. DPMÚL (Ústí n. L.) a MDT (Teplice) ze společného feedu Portabo ---
-app.get('/dpmul', positionRoute('/dpmul', createPortaboVehicles('595', calculateBearing)));
+app.get('/dpmul', positionRoute('/dpmul', createPortaboVehicles('595', calculateBearing, true)));
 app.get('/mdt', positionRoute('/mdt', createPortaboVehicles('585', calculateBearing)));
 
 const PORT = process.env.PORT || 3000;

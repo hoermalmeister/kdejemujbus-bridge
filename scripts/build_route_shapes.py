@@ -25,7 +25,7 @@ WINDOW_DAYS = 8
 TOLERANCE_M = 10.0
 TIMETABLE_LINE_PREFIXES = ('6050', '2651', '595', '585')
 # Linky, pro které navíc ukládáme data k dopočtu spoje z polohy a času (DPMLB)
-MATCH_LINE_PREFIXES = ('2651',)
+MATCH_LINE_PREFIXES = ('2651', '595')
 
 
 def rows(archive, name):
