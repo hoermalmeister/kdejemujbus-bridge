@@ -12,7 +12,7 @@ import { parseDpmlbVehicles } from './lib/dpmlbParser.js';
 import { createTsmkVehicles, getTsmkTrip } from './lib/tsmkApi.js';
 import { getDszoVehicles, getDszoTrip } from './lib/dszoApi.js';
 import { createPortaboVehicles } from './lib/portaboApi.js';
-import { getDpmhkVehicles, getDpmhkRoute } from './lib/dpmhkApi.js';
+import { getDpmhkVehicles, getDpmhkRoute, getDpmhkTimetable } from './lib/dpmhkApi.js';
 import { matchDpmlb } from './lib/dpmlbMatch.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
@@ -1217,6 +1217,21 @@ app.get('/dpmhk/route', async (req, res) => {
         res.json({ shape });
     } catch (error) {
         console.error('Chyba trasy DPMHK:', error.message);
+        res.status(502).json({ error: error.message });
+    }
+});
+
+app.get('/dpmhk/timetable', async (req, res) => {
+    try {
+        const { line, trip, route, obu } = req.query;
+        if (!/^\d+$/.test(trip || '') || !/^\d+$/.test(obu || '') || !route) {
+            return res.status(400).json({ error: 'Chybí trip, route nebo obu' });
+        }
+        const stops = await getDpmhkTimetable(line, trip, route, obu);
+        if (!stops.length) return res.status(404).json({ error: 'Jízdní řád není k dispozici' });
+        res.json({ stops });
+    } catch (error) {
+        console.error('Chyba jízdního řádu DPMHK:', error.message);
         res.status(502).json({ error: error.message });
     }
 });
