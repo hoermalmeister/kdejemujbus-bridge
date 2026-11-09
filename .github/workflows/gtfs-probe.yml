@@ -5,24 +5,37 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 12
     steps:
-      - name: overlap
+      - uses: actions/checkout@v4
+        with: { ref: feat/portabo }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --silent
+      - name: build + server
         run: |
-          curl -sS -m 20 "https://tabule.portabo.cz/api/v1-tabule/cis/GetTraffic/0" > p.json
-          curl -sS -m 20 "https://grapp-bridge-production.up.railway.app/duk" > duk.json
+          curl -fsSL --retry 3 -o feed.zip https://motis.obehy.cz/get-feeds/cz-jdf-gtfs.zip
+          python3 scripts/build_route_shapes.py feed.zip site >/dev/null 2>&1
+          echo "PG tt595 $(ls site/timetables | grep -c '^595')"
+          ( cd site && python3 -m http.server 8000 >/dev/null 2>&1 & ) ; sleep 2
+          PORT=3999 node server.js > s.log 2>&1 &
+          sleep 8
           node -e '
-          const p=JSON.parse(require("fs").readFileSync("p.json")).VehicleList||[];
-          const duk=JSON.parse(require("fs").readFileSync("duk.json"));
-          const dukArr=Array.isArray(duk)?duk:(duk.VehicleList||duk.vehicles||duk.data||[]);
-          console.log("PG duk vozů",dukArr.length,"klíče",JSON.stringify(Object.keys(dukArr[0]||{})).slice(0,300));
-          console.log("PG dukSample",JSON.stringify(dukArr[0]).slice(0,260));
-          const port585_595=p.filter(v=>String(v.CISLineID).startsWith("595")||String(v.CISLineID).startsWith("585"));
-          // překryv podle ID
-          const dukIds=new Set(dukArr.map(v=>String(v.ID??v.id??v.Id)));
-          const both=port585_595.filter(v=>dukIds.has(String(v.ID)));
-          console.log("PG portabo595_585",port585_595.length,"dukMáStejnéID",both.length);
-          // kolik DÚK vozů má CISLine 595/585
-          const dukCis=dukArr.map(v=>String(v.CISLineID??v.cis??"")).filter(c=>c.startsWith("595")||c.startsWith("585"));
-          console.log("PG dukSe595_585",dukCis.length);
-          '
+          (async()=>{const B="http://localhost:3999";
+          const du=await (await fetch(`${B}/dpmul`)).json();
+          const md=await (await fetch(`${B}/mdt`)).json();
+          console.log("PG dpmul",du.length,"heading",du.filter(v=>v.heading!=null).length,"v0",JSON.stringify(du[0]));
+          console.log("PG mdt",md.length,"heading",md.filter(v=>v.heading!=null).length,"v0",JSON.stringify(md[0]));
+          // GTFS: kolik DPMÚL spojů má jízdní řád i trasu
+          let tt=0,rt=0;const n=du.length;
+          for(const v of du){
+            const t=await fetch(`http://localhost:8000/timetables/${v.cis}_${v.spoj}.json`).then(r=>r.ok?r.json():null).catch(()=>null);
+            const r=await fetch(`http://localhost:8000/routes/${v.cis}.json`).then(r=>r.ok?r.json():null).catch(()=>null);
+            if(t)tt++; if(r?.trips?.[v.spoj])rt++;
+          }
+          console.log("PG DPMÚL s řádem",tt,"/",n,"s trasou",rt,"/",n);
+          const vv=du.find(v=>true);
+          const t=await fetch(`http://localhost:8000/timetables/${vv.cis}_${vv.spoj}.json`).then(r=>r.ok?r.json():null).catch(()=>null);
+          console.log("PG ukázka",vv.cis,vv.spoj,"cíl",t?.[t.length-1]?.name,"zastávek",t?.length);
+          })()'
+          grep -iE "portabo|error|chyba" s.log | head -3 | sed 's/^/PG log /'
