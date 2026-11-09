@@ -5,26 +5,29 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: feat/dszo-idzk }
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm install --silent
-      - name: server
+      - name: dpmhk
         run: |
-          PORT=3999 node server.js > s.log 2>&1 &
-          sleep 8
+          B=https://dpmhk.qrbus.me/index
+          H=(-H 'referer: https://dpmhk.qrbus.me/' -H 'x-requested-with: XMLHttpRequest' -H 'user-agent: Mozilla/5.0')
+          curl -sS -m 20 "${H[@]}" "$B/getAllRtdVehicles" > v.json
+          wc -c v.json | sed 's/^/PG size /'
           node -e '
-          (async()=>{const B="http://localhost:3999";
-          const d=await (await fetch(`${B}/dszo`)).json();
-          const withIdzk=d.filter(v=>v.idzk);
-          console.log("PG dszo",d.length,"sIDZK",withIdzk.length);
-          console.log("PG v0",JSON.stringify(withIdzk[0]));
-          const v=withIdzk[0];
-          const q=new URLSearchParams({num1:v.idzk.line,num2:v.idzk.run,cat:v.idzk.cat}).toString();
-          const r=await fetch(`${B}/mpv/zlin/route?${q}`);const t=await r.json();
-          console.log("PG trasa",r.status,"shape",t.shape?.length,"spoj",v.spoj);
-          })()'
-          grep -iE "dszo|error|chyba" s.log | head -3 | sed 's/^/PG log /'
+          const d=JSON.parse(require("fs").readFileSync("v.json")).vehicles||[];
+          console.log("PG vozů",d.length);
+          const act=d.filter(v=>v.gpsi===0&&v.vp===1);
+          console.log("PG aktivních(gpsi0,vp1)",act.length);
+          const v=act[0];
+          console.log("PG v0",JSON.stringify({vid:v.vid,ln:v.ln,li:v.li,la:v.la,lo:v.lo,az:v.az,d:v.d,psi:v.psi,rn:v.rn,o:v.o,tn:v.tn,b:v.b,s:v.s}));
+          console.log("PG coords",v.la/1e5,v.lo/1e5);
+          '
+          # katalogové endpointy
+          for m in getAllLines getLines getAllRoutes getStops getAllStops; do
+            curl -sS -m 15 "${H[@]}" -o o.txt -w "PG try $m %{http_code} %{size_download}B\n" "$B/$m"
+          done
+          # getRoute pro linku prvního aktivního vozu (routeId zkusíme 0)
+          P=$(node -e 'const d=JSON.parse(require("fs").readFileSync("v.json")).vehicles.filter(v=>v.gpsi===0&&v.vp===1);process.stdout.write(String(d[0].psi))')
+          echo "PG lineId $P"
+          curl -sS -m 20 "${H[@]}" -H 'content-type: application/x-www-form-urlencoded; charset=UTF-8' -H 'origin: https://dpmhk.qrbus.me' --data-raw "{\"lineId\":$P,\"routeId\":0}" "$B/getRoute" -o gr.json -w "PG getRoute(route0) http=%{http_code} size=%{size_download}\n"
+          node -e 'try{const d=JSON.parse(require("fs").readFileSync("gr.json"));const L=d.lines?.[0];console.log("PG line",L?.lineNumber,"routes",L?.routes?.map(r=>r.id+":"+r.name).slice(0,8).join(","))}catch(e){console.log("PG grERR",require("fs").readFileSync("gr.json","utf8").slice(0,100))}'
