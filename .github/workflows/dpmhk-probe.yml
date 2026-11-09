@@ -1,0 +1,19 @@
+name: DPMHK probe
+on:
+  push:
+    branches: [probe/dpmhk-match]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: probe/dpmhk-match
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node probe/run.mjs
