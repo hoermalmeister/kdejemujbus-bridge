@@ -16,4 +16,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node probe/run.mjs
+      - run: node probe/tt.mjs
