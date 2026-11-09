@@ -7,28 +7,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - name: map2
+      - uses: actions/checkout@v4
+        with: { ref: feat/dpmhk }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --silent
+      - name: server
         run: |
-          B=https://dpmhk.qrbus.me/index
-          H=(-H 'referer: https://dpmhk.qrbus.me/' -H 'x-requested-with: XMLHttpRequest' -H 'user-agent: Mozilla/5.0')
-          curl -sS -m 20 "${H[@]}" "$B/getAllRtdVehicles" > v.json
-          curl -sS -m 30 "${H[@]}" "$B/getAllLines" > lines.json
+          PORT=3999 node server.js > s.log 2>&1 &
+          sleep 8
           node -e '
-          (async()=>{
-          const veh=JSON.parse(require("fs").readFileSync("v.json")).vehicles.filter(v=>v.gpsi===0&&v.vp===1);
-          const lines=(JSON.parse(require("fs").readFileSync("lines.json")).lines)||[];
-          const byNum=new Map();
-          for(const L of lines){const m=new Map();for(const r of L.routes||[])m.set(String(r.name),{id:r.id,endName:r.endName||r.endName2});byNum.set(String(L.lineNumberText),{id:L.id,end:L.endName,routes:m});}
-          let lh=0,rh=0;const ex=[];
-          for(const v of veh){const L=byNum.get(String(v.ln));if(!L)continue;lh++;const r=L.routes.get(String(v.rn));if(r){rh++;if(ex.length<5)ex.push(`ln${v.ln}/rn${v.rn}->lineId ${L.id} route ${r.id} cíl ${r.endName}`);}}
-          console.log("PG lineHit",lh,"/",veh.length,"routeHit",rh);
-          ex.forEach(e=>console.log("PG",e));
-          const v=veh.find(v=>{const L=byNum.get(String(v.ln));return L&&L.routes.get(String(v.rn));});
-          const L=byNum.get(String(v.ln));const rid=L.routes.get(String(v.rn)).id;
-          const r=await fetch(`${B}/getRoute`,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded","referer":"https://dpmhk.qrbus.me/","x-requested-with":"XMLHttpRequest"},body:JSON.stringify({lineId:L.id,routeId:rid})});
-          const g=await r.json();const LL=g.lines?.[0];const route=(LL?.routes||[]).find(x=>x.id===rid);
-          const segs=(route?.segments||[]).slice().sort((a,b)=>a.segmentOrder-b.segmentOrder);
-          let pts=0;for(const s of segs)pts+=(s.points||[]).length;
-          console.log("PG getRoute",r.status,"lineId",L.id,"routeId",rid,"segmenty",segs.length,"bodů",pts);
-          })()
-          '
+          (async()=>{const B="http://localhost:3999";
+          const d=await (await fetch(`${B}/dpmhk`)).json();
+          console.log("PG dpmhk",d.length,"cíl",d.filter(v=>v.destination).length,"sTrasou",d.filter(v=>v.lineId&&v.routeId).length,"dir",d.filter(v=>v.heading!=null).length);
+          console.log("PG v0",JSON.stringify(d.find(v=>v.routeId)));
+          const v=d.find(v=>v.lineId&&v.routeId);
+          const r=await fetch(`${B}/dpmhk/route?lineId=${v.lineId}&routeId=${v.routeId}`);const t=await r.json();
+          console.log("PG trasa",r.status,"bodů",t.shape?.length,JSON.stringify(t.shape?.slice(0,2)));
+          })()'
+          grep -iE "dpmhk|error|chyba" s.log | head -3 | sed 's/^/PG log /'
