@@ -5,37 +5,36 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 9
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: feat/portabo }
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm install --silent
-      - name: build + server
+      - name: match
         run: |
+          B=https://tabule.portabo.cz/api/v1-tabule/cis
+          curl -sS -m 20 "$B/GetTraffic/0" > t.json
+          curl -sS -m 30 "$B/GetStations" > st.json
           curl -fsSL --retry 3 -o feed.zip https://motis.obehy.cz/get-feeds/cz-jdf-gtfs.zip
-          python3 scripts/build_route_shapes.py feed.zip site >/dev/null 2>&1
-          echo "PG tt595 $(ls site/timetables | grep -c '^595')"
-          ( cd site && python3 -m http.server 8000 >/dev/null 2>&1 & ) ; sleep 2
-          PORT=3999 node server.js > s.log 2>&1 &
-          sleep 8
-          node -e '
-          (async()=>{const B="http://localhost:3999";
-          const du=await (await fetch(`${B}/dpmul`)).json();
-          const md=await (await fetch(`${B}/mdt`)).json();
-          console.log("PG dpmul",du.length,"heading",du.filter(v=>v.heading!=null).length,"v0",JSON.stringify(du[0]));
-          console.log("PG mdt",md.length,"heading",md.filter(v=>v.heading!=null).length,"v0",JSON.stringify(md[0]));
-          // GTFS: kolik DPMÚL spojů má jízdní řád i trasu
-          let tt=0,rt=0;const n=du.length;
-          for(const v of du){
-            const t=await fetch(`http://localhost:8000/timetables/${v.cis}_${v.spoj}.json`).then(r=>r.ok?r.json():null).catch(()=>null);
-            const r=await fetch(`http://localhost:8000/routes/${v.cis}.json`).then(r=>r.ok?r.json():null).catch(()=>null);
-            if(t)tt++; if(r?.trips?.[v.spoj])rt++;
-          }
-          console.log("PG DPMÚL s řádem",tt,"/",n,"s trasou",rt,"/",n);
-          const vv=du.find(v=>true);
-          const t=await fetch(`http://localhost:8000/timetables/${vv.cis}_${vv.spoj}.json`).then(r=>r.ok?r.json():null).catch(()=>null);
-          console.log("PG ukázka",vv.cis,vv.spoj,"cíl",t?.[t.length-1]?.name,"zastávek",t?.length);
-          })()'
-          grep -iE "portabo|error|chyba" s.log | head -3 | sed 's/^/PG log /'
+          python3 - <<'PY'
+          import json,zipfile,csv,io
+          d=json.load(open("t.json"))["VehicleList"]
+          stations={}
+          for s in json.load(open("st.json"))["ItemList"]:
+              stations.setdefault(s["Node"], s["Name"])
+          print("PG stations",len(stations))
+          z=zipfile.ZipFile("feed.zip")
+          def rows(n):
+              with z.open(n) as r: yield from csv.DictReader(io.TextIOWrapper(r,encoding="utf-8-sig"))
+          gtfs=set()
+          for t in rows("trips.txt"):
+              p=t.get("trip_short_name","").split()
+              if len(p)==2 and p[0].startswith(("595","585")): gtfs.add((p[0],p[1]))
+          for op,pref in [("DPMÚL","595"),("MDT","585")]:
+              vs=[v for v in d if str(v["CISLineID"]).startswith(pref)]
+              byRoute=sum(1 for v in vs if (str(v["CISLineID"]),str(v["RouteID"])) in gtfs)
+              byLast=sum(1 for v in vs if (str(v["CISLineID"]),v["qride_tripID"].split("-")[-1]) in gtfs)
+              fin=sum(1 for v in vs if v["FinalNode"] in stations)
+              cur=sum(1 for v in vs if v["StationNode"] in stations)
+              lineDiff=sum(1 for v in vs if str(v["LineID"])!=str(v["qride_linename"]))
+              print(f"PG {op} n={len(vs)} RouteID_GTFS={byRoute} last_GTFS={byLast} finalName={fin} curName={cur} LineID!=linename={lineDiff}")
+              ex=vs[0]
+              print(f"PG {op} ex LineID={ex['LineID']} linename={ex['qride_linename']} RouteID={ex['RouteID']} final={ex['FinalNode']}->{stations.get(ex['FinalNode'])} cur={ex['StationNode']}->{stations.get(ex['StationNode'])}")
+          PY
