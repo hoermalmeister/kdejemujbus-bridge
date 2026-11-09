@@ -11,16 +11,20 @@ jobs:
         run: |
           B=https://grapp-bridge-production.up.railway.app
           curl -sS -m 20 "$B/mpv/zlin" > idzk.json
+          wc -c idzk.json | sed 's/^/PG size /'
           node -e '
           (async()=>{
-          const idzk=JSON.parse(require("fs").readFileSync("idzk.json"));
-          const pick=(cr)=>{const it=idzk.find(x=>String(x.cr||"").replace(/<[^>]*>/g,"").trim()===cr && !x.external);const f=String(it.cn||"").split("|");return {line:f[0],run:f[2],cat:it.cat,dest:f[9]};};
-          for(const cr of ["DSZO","ARRIVA, pr. Zlín"]){
-            const t=pick(cr);
-            const u=`${B}/mpv/zlin/route?num1=${t.line}&num2=${t.run}&cat=${t.cat}`;
+          let idzk=[];try{idzk=JSON.parse(require("fs").readFileSync("idzk.json"));}catch(e){console.log("PG parseERR",String(e).slice(0,80));return;}
+          console.log("PG idzk",idzk.length);
+          const dsz=idzk.filter(x=>String(x.cr||"").replace(/<[^>]*>/g,"").trim()==="DSZO");
+          console.log("PG dsz",dsz.length,"external?",dsz.slice(0,5).map(x=>x.external));
+          const cand=[dsz[0], idzk.find(x=>!x.external)].filter(Boolean);
+          for(const it of cand){
+            const f=String(it.cn||"").split("|");const cr=String(it.cr||"").replace(/<[^>]*>/g,"").trim();
+            const u=`${B}/mpv/zlin/route?num1=${f[0]}&num2=${f[2]}&cat=${it.cat}`;
             try{const r=await fetch(u);const txt=await r.text();let sh=null;try{sh=JSON.parse(txt).shape}catch(e){}
-            console.log("PG",cr,"L"+t.line+"/"+t.run+" cat"+t.cat,"->",r.status,"shape",sh?sh.length:("raw:"+txt.slice(0,80)));}
-            catch(e){console.log("PG",cr,"ERR",String(e).slice(0,80))}
+            console.log("PG",cr,"ext"+(it.external?1:0),"L"+f[0]+"/"+f[2]+" cat"+it.cat,"->",r.status,"shape",sh?sh.length:("raw:"+txt.slice(0,70)));}
+            catch(e){console.log("PG ERR",String(e).slice(0,80))}
           }
           })()
           '
