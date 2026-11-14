@@ -420,12 +420,15 @@ async function refreshJmkToken() {
 }
 
 // --- POMOCNÁ FUNKCE PRO VOLÁNÍ API JMK (S Auto-Healingem) ---
-async function fetchJmkApi(url) {
-    if (!jmkToken) {
-        await refreshJmkToken();
-    }
+// Obnovu tokenu sdílí všechny souběžné dotazy, ať se web IDS JMK nestahuje několikrát naráz
+let jmkTokenRefresh = null;
+function refreshJmkTokenOnce() {
+    jmkTokenRefresh ??= refreshJmkToken().finally(() => { jmkTokenRefresh = null; });
+    return jmkTokenRefresh;
+}
 
-    let options = {
+async function requestJmk(url) {
+    const response = await fetch(url, {
         headers: {
             'accept': 'application/json, text/plain, */*',
             'Origin': 'https://mapa.idsjmk.cz',
@@ -433,26 +436,34 @@ async function fetchJmkApi(url) {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
             'x-access-token': jmkToken
         }
-    };
+    });
+    const text = await response.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch { /* odpověď není JSON */ }
+    // „Chybný token" chodí s různými stavovými kódy (i 200), proto hlídáme i text odpovědi
+    const tokenProblem = response.status === 401 || response.status === 403 || (text.length < 300 && /token/i.test(text));
+    return { ok: response.ok && data !== null && !tokenProblem, status: response.status, text, data, tokenProblem };
+}
 
-    let response = await fetch(url, options);
+async function fetchJmkApi(url) {
+    if (!jmkToken) await refreshJmkTokenOnce();
 
-    // Pokud token mezitím vypršel (server běží už dlouho), obnovíme ho a zkusíme to podruhé
-    if (response.status === 401 || response.status === 403) {
-        console.log("Platnost IDS JMK tokenu vypršela, spouštím obnovu...");
-        const refreshed = await refreshJmkToken();
-        if (refreshed) {
-            options.headers['x-access-token'] = jmkToken;
-            response = await fetch(url, options);
-        }
+    let result = await requestJmk(url);
+
+    // Token mezitím vypršel (typicky po delší pauze bez dotazů) nebo zdroj vrátil chybu:
+    // token obnovíme a zkusíme to jednou znovu
+    if (!result.ok) {
+        console.log(`IDS JMK odpovědělo ${result.status} (${result.text.slice(0, 80)}), obnovuji token...`);
+        await refreshJmkTokenOnce();
+        result = await requestJmk(url);
     }
 
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`API JMK zamítlo přístup: ${response.status} - ${text}`);
+    if (!result.ok) {
+        // Při chybě tokenu ho zahodíme, ať se příští dotaz pokusí o čerstvý
+        if (result.tokenProblem) jmkToken = '';
+        throw new Error(`API JMK zamítlo přístup: ${result.status} - ${result.text.slice(0, 200)}`);
     }
-    
-    return await response.json();
+    return result.data;
 }
 
 // --- 9A. ENDPOINT PRO IDS JMK (Základní polohy) ---
