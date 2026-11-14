@@ -13,4 +13,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node probe/gepard.mjs
+      - run: |
+          cd probe
+          npm init -y >/dev/null
+          npm i maplibre-gl@3.0.0 playwright >/dev/null 2>&1
+          npx playwright install --with-deps chromium >/dev/null 2>&1
+          grep -c "clearTiles" node_modules/maplibre-gl/dist/maplibre-gl.js | sed 's/^/PG clearTiles count /'
+          node mltest.mjs
