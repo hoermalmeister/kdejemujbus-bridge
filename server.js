@@ -13,6 +13,7 @@ import { createTsmkVehicles, getTsmkTrip } from './lib/tsmkApi.js';
 import { getDszoVehicles, getDszoTrip } from './lib/dszoApi.js';
 import { createPortaboVehicles } from './lib/portaboApi.js';
 import { getDpmhkVehicles, getDpmhkRoute, getDpmhkTimetable } from './lib/dpmhkApi.js';
+import { getGepardVehicles } from './lib/gepardApi.js';
 import { matchDpmlb } from './lib/dpmlbMatch.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
@@ -1235,6 +1236,9 @@ app.get('/dpmhk/timetable', async (req, res) => {
         res.status(502).json({ error: error.message });
     }
 });
+
+// --- 33. Gepard Express (úzkokolejky JHMD) ---
+app.get('/gepard', positionRoute('/gepard', getGepardVehicles));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
