@@ -13,4 +13,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node probe/jmk.mjs
+      - run: node probe/multi.mjs
