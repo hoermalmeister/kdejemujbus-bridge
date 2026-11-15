@@ -14,6 +14,7 @@ import { getDszoVehicles, getDszoTrip } from './lib/dszoApi.js';
 import { createPortaboVehicles } from './lib/portaboApi.js';
 import { getDpmhkVehicles, getDpmhkRoute, getDpmhkTimetable } from './lib/dpmhkApi.js';
 import { getGepardVehicles } from './lib/gepardApi.js';
+import { getDpmjVehicles } from './lib/dpmjApi.js';
 import { matchDpmlb } from './lib/dpmlbMatch.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
@@ -378,34 +379,54 @@ app.get('/pid/timetable', async (req, res) => {
 let jmkToken = '';
 
 // --- FUNKCE PRO AUTOMATICKÉ NALEZENÍ NOVÉHO TOKENU ---
+// Token je base64 z "|WEB|<GUID>" a web ho předává v initializeApplication('...').
+// Dřív se hledal podle pevného začátku "fFdFQnw", jenže sedmý znak závisí na prvním znaku
+// GUID (číslice → "w", písmeno a–f → "x"), takže se token v části případů nenašel a můstek
+// vracel 401, dokud web nevygeneroval jiný GUID. Proto token poznáváme podle obsahu.
+function isJmkToken(candidate) {
+    try {
+        return /^\|WEB\|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(Buffer.from(candidate, 'base64').toString('utf8'));
+    } catch {
+        return false;
+    }
+}
+
+function findJmkToken(text) {
+    // 1. Přímo z volání initializeApplication('...')
+    const call = /initializeApplication\(\s*['"]([A-Za-z0-9+/=_-]{20,})['"]/.exec(text);
+    if (call) return call[1];
+    // 2. Jakýkoli base64 řetězec, který po dekódování vypadá jako "|WEB|<GUID>"
+    for (const match of text.matchAll(/['"]([A-Za-z0-9+/]{40,}={0,2})['"]/g)) {
+        if (isJmkToken(match[1])) return match[1];
+    }
+    return null;
+}
+
 async function refreshJmkToken() {
     console.log("Získávám čerstvý IDS JMK token ze zdrojových kódů...");
     try {
-        const response = await fetch('https://mapa.idsjmk.cz/');
+        const response = await fetch('https://mapa.idsjmk.cz/', { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } });
         const html = await response.text();
-        
-        const tokenRegex = /(fFdFQnw[A-Za-z0-9+/=]+)/;
-        let match = html.match(tokenRegex);
-        
-        if (match && match[1]) {
-            jmkToken = match[1];
+
+        let token = findJmkToken(html);
+        if (token) {
+            jmkToken = token;
             console.log("IDS JMK Token úspěšně načten z HTML.");
             return true;
         }
 
-        const scriptMatches = [...html.matchAll(/<script[^>]+src="([^">]+)"/g)];
-        for (const scriptMatch of scriptMatches) {
-            let scriptUrl = scriptMatch[1];
+        // Záloha: token v některém ze skriptů (klasických i modulových)
+        const scriptUrls = new Set();
+        for (const match of html.matchAll(/<script[^>]+src=["']?([^"'\s>]+)/g)) scriptUrls.add(match[1]);
+        for (const match of html.matchAll(/from\s+['"]([^'"]+\.js[^'"]*)['"]/g)) scriptUrls.add(match[1]);
+        for (let scriptUrl of scriptUrls) {
             if (!scriptUrl.startsWith('http')) {
                 scriptUrl = 'https://mapa.idsjmk.cz' + (scriptUrl.startsWith('/') ? '' : '/') + scriptUrl;
             }
-
-            const scriptRes = await fetch(scriptUrl);
-            const scriptText = await scriptRes.text();
-            
-            match = scriptText.match(tokenRegex);
-            if (match && match[1]) {
-                jmkToken = match[1];
+            const scriptText = await (await fetch(scriptUrl)).text();
+            token = findJmkToken(scriptText);
+            if (token) {
+                jmkToken = token;
                 console.log(`IDS JMK Token úspěšně načten z JS (${scriptUrl}).`);
                 return true;
             }
@@ -579,6 +600,8 @@ app.get('/vdv', positionRoute('/vdv', async () => {
                 }
                 trip.heading = state.heading;
             }
+            // Zdroj nově posílá azimut (azm); dopočet z pohybu zůstává jako záloha
+            if (Number.isFinite(trip.azm) && trip.azm > 0) trip.heading = trip.azm;
 
             if (shouldKeep) {
                 activeData.push(trip);
@@ -856,6 +879,9 @@ app.get('/idpk', positionRoute('/idpk', async () => {
                 idpkHistory.set(v.id, { lat: v.lat, lng: v.lng, heading: null, lastMovedTime: now });
             }
             
+            // Zdroj nově posílá azimut (azm); dopočet z pohybu zůstává jako záloha
+            if (Number.isFinite(v.azm) && v.azm > 0) heading = v.azm;
+
             if (shouldKeep) {
                 activeVehicles.push({ ...v, bearing: heading });
             }
@@ -1250,6 +1276,24 @@ app.get('/dpmhk/timetable', async (req, res) => {
 
 // --- 33. Gepard Express (úzkokolejky JHMD) ---
 app.get('/gepard', positionRoute('/gepard', getGepardVehicles));
+
+// --- 34. DPMJ (Jihlava) ---
+app.get('/dpmj', positionRoute('/dpmj', async () => {
+    const vehicles = await getDpmjVehicles();
+    // Zdroj nemá číslo spoje: dopočteme ho z polohy, času a zpoždění; poslední a cílová
+    // zastávka (souřadnice z číselníku zastávek) výběr zpřesňují
+    await Promise.all(vehicles.map(async (vehicle) => {
+        const hints = vehicle.hints;
+        delete vehicle.hints;
+        const match = await matchDpmlb(vehicle.fullLine, vehicle.lat, vehicle.lng, vehicle.delay || 0, hints);
+        if (match) {
+            vehicle.run = match.run;
+            vehicle.stopIndex = match.stopIndex;
+            if (!vehicle.destination && match.hs) vehicle.destination = match.hs;
+        }
+    }));
+    return vehicles;
+}));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
