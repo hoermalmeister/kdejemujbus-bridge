@@ -16,7 +16,8 @@ import { getDpmhkVehicles, getDpmhkRoute, getDpmhkTimetable } from './lib/dpmhkA
 import { getGepardVehicles } from './lib/gepardApi.js';
 import { getDpmjVehicles } from './lib/dpmjApi.js';
 import { getArrivaVehicles } from './lib/arrivaApi.js';
-import { matchDpmlb, scheduledVehicles } from './lib/dpmlbMatch.js';
+import { matchDpmlb, scheduledVehicles, tripInfo } from './lib/dpmlbMatch.js';
+import { checkKey, acceptPush, getPushedVehicles, pushStatus } from './lib/dpkvPush.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
 const UPSTREAM_TIMEOUT_MS = 10_000;
@@ -1334,6 +1335,33 @@ for (const [fullLine, info] of Object.entries(SCHEDULED_LINES)) {
         return vehicles.map((v) => ({ ...v, vehicle: v.run, line: info.line, fullLine, delay: 0, estimated: true }));
     }));
 }
+
+// --- 37. DPKV (Karlovy Vary) – data posílá telefon v ČR (portál datacentra nepouští) ---
+app.post('/dpkv/push', express.json({ limit: '512kb' }), (req, res) => {
+    if (!checkKey(req.get('x-dpkv-key'))) return res.status(401).json({ error: 'Neplatný klíč' });
+    try {
+        res.json({ ok: true, vehicles: acceptPush(req.body) });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+app.get('/dpkv/status', (req, res) => res.json(pushStatus()));
+app.get('/dpkv', positionRoute('/dpkv', async () => {
+    const vehicles = getPushedVehicles();
+    // Číslo spoje známe: cíl a poslední zastávku dobereme z jízdního řádu
+    await Promise.all(vehicles.map(async (vehicle) => {
+        if (!vehicle.fullLine) return;
+        const info = await tripInfo(vehicle.fullLine, vehicle.run, vehicle.lat, vehicle.lng).catch(() => null);
+        if (info) {
+            // cíl z jízdního řádu (shoduje se s ním jízdní řád v detailu), portál jako záloha
+            vehicle.destination = info.destination || vehicle.destination;
+            vehicle.stopIndex = info.stopIndex;
+            vehicle.stop = info.stop;
+            vehicle.stopMatched = true;
+        }
+    }));
+    return vehicles;
+}));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
