@@ -13,4 +13,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node probe/multi.mjs
+      - run: python3 probe/multi.py
