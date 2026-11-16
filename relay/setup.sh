@@ -14,8 +14,8 @@ pkg install -y nodejs-lts curl || pkg install -y nodejs curl
 echo "== Stahuji skript =="
 mkdir -p "$HOME/dpkv"
 cd "$HOME/dpkv"
-curl -fsSL -o dpkv-relay.mjs "$BASE/dpkv-relay.mjs"
-curl -fsSL -o run.sh "$BASE/run.sh"
+curl -fsSL -o dpkv-relay.mjs "$BASE/dpkv-relay.mjs?t=$(date +%s)"
+curl -fsSL -o run.sh "$BASE/run.sh?t=$(date +%s)"
 chmod +x run.sh
 printf '%s' "$KEY" > key
 chmod 600 key
