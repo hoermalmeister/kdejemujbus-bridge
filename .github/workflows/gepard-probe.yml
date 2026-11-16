@@ -10,5 +10,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - run: curl -fsSL --retry 3 -o feed.zip https://motis.obehy.cz/get-feeds/cz-jdf-gtfs.zip
-      - run: python3 probe/multi.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node probe/multi.mjs
