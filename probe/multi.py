@@ -12,11 +12,10 @@ except Exception as e:
 want = ('2256', '580916', '157710', '721341')
 z = zipfile.ZipFile('feed.zip')
 def rows(n): return csv.DictReader(io.TextIOWrapper(z.open(n), encoding='utf-8-sig'))
-routes = {r['route_id']: r for r in rows('routes.txt') if r['route_short_name'].startswith(want)}
-log('ROUTES', sorted((r['route_short_name'], r.get('route_long_name','')[:40]) for r in routes.values()))
 trips = collections.defaultdict(list)
 for t in rows('trips.txt'):
-    if t['route_id'] in routes: trips[routes[t['route_id']]['route_short_name']].append(t)
+    sn = (t.get('trip_short_name') or '').split()
+    if sn and sn[0].startswith(want): trips[sn[0]].append(t)
 for line, ts in sorted(trips.items()):
     log('TRIPS', line, len(ts), 'headsigns', collections.Counter(t.get('trip_headsign','') for t in ts).most_common(4), 'short', [t.get('trip_short_name') for t in ts[:3]])
 names = {s['stop_id']: s['stop_name'] for s in rows('stops.txt')}
