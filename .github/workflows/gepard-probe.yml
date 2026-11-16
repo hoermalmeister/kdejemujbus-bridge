@@ -10,6 +10,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: |
+          set +e
           H=dopravniportal.dpkv.cz
           echo "PG DNS A: $(dig +short A $H | tr '\n' ' ') AAAA: $(dig +short AAAA $H | tr '\n' ' ')"
           echo "PG runner IP: $(curl -s --max-time 10 https://api.ipify.org) $(curl -s --max-time 10 https://ipinfo.io/country)"
