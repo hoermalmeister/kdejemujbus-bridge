@@ -23,9 +23,11 @@ from datetime import date, timedelta
 
 WINDOW_DAYS = 8
 TOLERANCE_M = 10.0
-TIMETABLE_LINE_PREFIXES = ('6050', '2651', '595', '585', '765')
-# Linky, pro které navíc ukládáme data k dopočtu spoje z polohy a času (DPMLB, DPMÚL, DPMJ)
-MATCH_LINE_PREFIXES = ('2651', '595', '765')
+# Arriva: MHD Kladno (2256xx) a linky Arriva Express (AEx) – přidat, když AEx dostane novou linku
+ARRIVA_EXPRESS_LINES = ('157710', '580916', '721341')
+TIMETABLE_LINE_PREFIXES = ('6050', '2651', '595', '585', '765', '2256') + ARRIVA_EXPRESS_LINES
+# Linky, pro které navíc ukládáme data k dopočtu spoje z polohy a času (DPMLB, DPMÚL, DPMJ, Arriva)
+MATCH_LINE_PREFIXES = ('2651', '595', '765', '2256') + ARRIVA_EXPRESS_LINES
 
 
 def rows(archive, name):
@@ -159,16 +161,19 @@ def write_realtime(archive, timetable_trips, match_trips, match_head, match_mask
     # Párovací data: pro každou linku seznam spojů se zastávkami (čas odjezdu v sekundách + souřadnice)
     by_line = defaultdict(list)
     for trip_id, (line, run) in match_trips.items():
-        times, lats, lons = [], [], []
+        times, lats, lons, stop_names = [], [], [], []
         for _, _, dep, sid in sorted(stops[trip_id]):
             if sid not in coords:
                 continue
             times.append(seconds(dep))
             lats.append(round(float(coords[sid][0]), 5))
             lons.append(round(float(coords[sid][1]), 5))
+            stop_names.append(names.get(sid, ''))
         if len(times) >= 2:
+            # n = názvy zastávek, aby šlo spoj párovat i podle jména poslední/cílové zastávky
             by_line[line].append({'run': run, 'days': match_mask[(line, run)],
-                                  'hs': match_head.get(trip_id, ''), 't': times, 'la': lats, 'lo': lons})
+                                  'hs': match_head.get(trip_id, ''), 't': times, 'la': lats, 'lo': lons,
+                                  'n': stop_names})
     if by_line:
         match_dir = os.path.join(out_dir, 'match')
         os.makedirs(match_dir, exist_ok=True)
