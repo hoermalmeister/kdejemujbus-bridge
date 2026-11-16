@@ -15,6 +15,7 @@ import { createPortaboVehicles } from './lib/portaboApi.js';
 import { getDpmhkVehicles, getDpmhkRoute, getDpmhkTimetable } from './lib/dpmhkApi.js';
 import { getGepardVehicles } from './lib/gepardApi.js';
 import { getDpmjVehicles } from './lib/dpmjApi.js';
+import { getArrivaVehicles } from './lib/arrivaApi.js';
 import { matchDpmlb } from './lib/dpmlbMatch.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
@@ -1291,11 +1292,34 @@ app.get('/dpmj', positionRoute('/dpmj', async () => {
         if (match) {
             vehicle.run = match.run;
             vehicle.stopIndex = match.stopIndex;
+            vehicle.stopMatched = match.stopMatched;
             if (!vehicle.destination && match.hs) vehicle.destination = match.hs;
         }
     }));
     return vehicles;
 }));
+
+// --- 35. Arriva: MHD Kladno a Arriva Express ---
+// Zdroj nemá číslo spoje: dopočteme ho z polohy, času a zpoždění s nápovědou podle názvu
+// poslední a cílové zastávky (zdroj posílá jen jména)
+async function arrivaWithRuns(type) {
+    const vehicles = await getArrivaVehicles(type);
+    await Promise.all(vehicles.map(async (vehicle) => {
+        const match = await matchDpmlb(vehicle.fullLine, vehicle.lat, vehicle.lng, vehicle.delay || 0, {
+            lastName: vehicle.stop,
+            finalName: vehicle.destination
+        });
+        if (match) {
+            vehicle.run = match.run;
+            vehicle.stopIndex = match.stopIndex;
+            vehicle.stopMatched = match.stopMatched;
+            if (!vehicle.destination && match.hs) vehicle.destination = match.hs;
+        }
+    }));
+    return vehicles;
+}
+app.get('/kladno', positionRoute('/kladno', () => arrivaWithRuns('Kladno')));
+app.get('/arrivaex', positionRoute('/arrivaex', () => arrivaWithRuns('Express')));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
