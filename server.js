@@ -16,7 +16,7 @@ import { getDpmhkVehicles, getDpmhkRoute, getDpmhkTimetable } from './lib/dpmhkA
 import { getGepardVehicles } from './lib/gepardApi.js';
 import { getDpmjVehicles } from './lib/dpmjApi.js';
 import { getArrivaVehicles } from './lib/arrivaApi.js';
-import { matchDpmlb } from './lib/dpmlbMatch.js';
+import { matchDpmlb, scheduledVehicles } from './lib/dpmlbMatch.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
 const UPSTREAM_TIMEOUT_MS = 10_000;
@@ -1320,6 +1320,20 @@ async function arrivaWithRuns(type) {
 }
 app.get('/kladno', positionRoute('/kladno', () => arrivaWithRuns('Kladno')));
 app.get('/arrivaex', positionRoute('/arrivaex', () => arrivaWithRuns('Express')));
+
+// --- 36. Linky bez real-time poloh: teoretická poloha podle jízdního řádu ---
+// /scheduled/705100 (MHD Ústí nad Orlicí), /scheduled/635007 (MHD Jičín), /scheduled/495712 (MHD Tachov)
+const SCHEDULED_LINES = {
+    '705100': { line: '100' },
+    '635007': { line: '7' },
+    '495712': { line: '712' }
+};
+for (const [fullLine, info] of Object.entries(SCHEDULED_LINES)) {
+    app.get(`/scheduled/${fullLine}`, positionRoute(`/scheduled/${fullLine}`, async () => {
+        const vehicles = await scheduledVehicles(fullLine);
+        return vehicles.map((v) => ({ ...v, vehicle: v.run, line: info.line, fullLine, delay: 0, estimated: true }));
+    }));
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
