@@ -520,8 +520,10 @@ app.get('/idsjmk-timetable', async (req, res) => {
         const { serviceid, lineid, routeid } = req.query;
         const data = await fetchJmkApi(`https://mapa.idsjmk.cz/api/serviceinfo?serviceid=${serviceid}&lineid=${lineid}&routeid=${routeid}`);
         
-        if (data && data.Routes && data.Routes.length > 0) {
-            data.Routes[0].Stops.forEach(stop => {
+        // Názvy doplníme do všech spojů – za aktuálním mohou následovat navazující spoje
+        // téhož vozidla (ContinuesWithPassengers)
+        if (data && Array.isArray(data.Routes)) {
+            data.Routes.flatMap(route => route.Stops || []).forEach(stop => {
                 const name = manualStops[stop.StopId] || jmkStops[stop.StopId];
                 stop.HasName = !!name;
                 stop.StopName = name ? name : `Zastávka ID: ${stop.StopId}`;
