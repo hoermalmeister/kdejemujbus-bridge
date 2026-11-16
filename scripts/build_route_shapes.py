@@ -26,8 +26,8 @@ TOLERANCE_M = 10.0
 # Arriva: MHD Kladno (2256xx) a linky Arriva Express (AEx) – přidat, když AEx dostane novou linku
 ARRIVA_EXPRESS_LINES = ('157710', '580916', '721341')
 # Linky bez real-time poloh, pro které ukazujeme teoretickou polohu podle jízdního řádu
-# (MHD Ústí nad Orlicí, Jičín, Tachov)
-SCHEDULED_LINES = ('705100', '635007', '495712')
+# (MHD Ústí nad Orlicí, Jičín, Tachov, Špindlerův Mlýn)
+SCHEDULED_LINES = ('705100', '635007', '495712', '696002')
 TIMETABLE_LINE_PREFIXES = ('6050', '2651', '595', '585', '765', '2256', '4250') + ARRIVA_EXPRESS_LINES + SCHEDULED_LINES
 # Linky, pro které navíc ukládáme data k dopočtu spoje z polohy a času (DPMLB, DPMÚL, DPMJ, Arriva, DPKV)
 MATCH_LINE_PREFIXES = ('2651', '595', '765', '2256', '4250') + ARRIVA_EXPRESS_LINES + SCHEDULED_LINES

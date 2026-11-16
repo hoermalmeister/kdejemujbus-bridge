@@ -1323,11 +1323,13 @@ app.get('/kladno', positionRoute('/kladno', () => arrivaWithRuns('Kladno')));
 app.get('/arrivaex', positionRoute('/arrivaex', () => arrivaWithRuns('Express')));
 
 // --- 36. Linky bez real-time poloh: teoretická poloha podle jízdního řádu ---
-// /scheduled/705100 (MHD Ústí nad Orlicí), /scheduled/635007 (MHD Jičín), /scheduled/495712 (MHD Tachov)
+// /scheduled/705100 (MHD Ústí nad Orlicí), /scheduled/635007 (MHD Jičín), /scheduled/495712 (MHD Tachov),
+// /scheduled/696002 (MHD Špindlerův Mlýn)
 const SCHEDULED_LINES = {
     '705100': { line: '100' },
     '635007': { line: '7' },
-    '495712': { line: '712' }
+    '495712': { line: '712' },
+    '696002': { line: '2' }
 };
 for (const [fullLine, info] of Object.entries(SCHEDULED_LINES)) {
     app.get(`/scheduled/${fullLine}`, positionRoute(`/scheduled/${fullLine}`, async () => {
