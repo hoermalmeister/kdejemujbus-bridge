@@ -25,9 +25,12 @@ WINDOW_DAYS = 8
 TOLERANCE_M = 10.0
 # Arriva: MHD Kladno (2256xx) a linky Arriva Express (AEx) – přidat, když AEx dostane novou linku
 ARRIVA_EXPRESS_LINES = ('157710', '580916', '721341')
-TIMETABLE_LINE_PREFIXES = ('6050', '2651', '595', '585', '765', '2256') + ARRIVA_EXPRESS_LINES
+# Linky bez real-time poloh, pro které ukazujeme teoretickou polohu podle jízdního řádu
+# (MHD Ústí nad Orlicí, Jičín, Tachov)
+SCHEDULED_LINES = ('705100', '635007', '495712')
+TIMETABLE_LINE_PREFIXES = ('6050', '2651', '595', '585', '765', '2256') + ARRIVA_EXPRESS_LINES + SCHEDULED_LINES
 # Linky, pro které navíc ukládáme data k dopočtu spoje z polohy a času (DPMLB, DPMÚL, DPMJ, Arriva)
-MATCH_LINE_PREFIXES = ('2651', '595', '765', '2256') + ARRIVA_EXPRESS_LINES
+MATCH_LINE_PREFIXES = ('2651', '595', '765', '2256') + ARRIVA_EXPRESS_LINES + SCHEDULED_LINES
 
 
 def rows(archive, name):
