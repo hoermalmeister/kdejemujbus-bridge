@@ -113,12 +113,76 @@ async function push(features, diag) {
     const response = await fetch(PUSH_URL, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-dpkv-key': KEY },
-        body: JSON.stringify({ features: features.map(f => ({ id: f.id, x: f.x, y: f.y, html: f.html })), diag })
+        body: JSON.stringify({ features: features.map(f => ({ id: f.id, x: f.x, y: f.y, html: f.html, delay: f.delay, dest: f.dest })), diag })
     });
     if (!response.ok) throw new Error(`můstek ${response.status} ${await response.text().catch(() => '')}`.slice(0, 200));
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// --- Zpoždění a směr z tooltipu vozu (Map/RTConnTooltip) ---
+// Jeden dotaz na vůz, proto v každém kole jen pár vozů: nejdřív ty, u kterých zpoždění ještě
+// neznáme, pak ty s nejstarší hodnotou. Zpoždění každého vozu se tak obnoví zhruba každou minutu.
+const TOOLTIPS_PER_ROUND = 6;
+const TOOLTIP_MAX_AGE_MS = 5 * 60_000;
+const tooltipCache = new Map(); // id → { at, delay, dest }
+
+function decodeHtml(text) {
+    return text.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+        .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+        .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+}
+
+function parseTooltip(html) {
+    const text = decodeHtml(html.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ');
+    const delayMatch = /Zpo\u017ed\u011bn\u00ed\s*:\s*(-?\d+(?:[.,]\d+)?)\s*min/i.exec(text);
+    const destMatch = /Sm\u011br\s*:\s*(.+?)\s*(?:Zpo\u017ed\u011bn\u00ed\s*:|$)/i.exec(text);
+    return {
+        delay: delayMatch ? Number(delayMatch[1].replace(',', '.')) : null,
+        dest: destMatch ? destMatch[1].trim() : null
+    };
+}
+
+async function fetchTooltip(id) {
+    const headers = { accept: '*/*', referer: PORTAL, 'x-requested-with': 'XMLHttpRequest', 'user-agent': UA, ...(cookies ? { cookie: cookies } : {}) };
+    const url = `${PORTAL}Map/RTConnTooltip?context=${encodeURIComponent(JSON.stringify({ id }))}`;
+    let response = await fetch(url, { headers });
+    if (!response.ok) {
+        // prohlížeč volá nejdřív GetTooltip – zkusíme to stejně
+        await fetch(`${PORTAL}FeatureService/GetTooltip?layerId=${encodeURIComponent(RT_LAYER)}&featureId=${encodeURIComponent(id)}`, { headers }).catch(() => {});
+        response = await fetch(url, { headers });
+    }
+    storeCookies(response);
+    if (!response.ok) throw new Error(`tooltip ${response.status}`);
+    return parseTooltip(await response.text());
+}
+
+async function refreshTooltips(features) {
+    const now = Date.now();
+    const ids = features.map(f => f.id);
+    for (const id of tooltipCache.keys()) if (!ids.includes(id)) tooltipCache.delete(id);
+    const queue = ids
+        .map(id => ({ id, at: tooltipCache.get(id)?.at ?? 0 }))
+        .sort((a, b) => a.at - b.at)
+        .slice(0, TOOLTIPS_PER_ROUND);
+    let ok = 0;
+    for (const { id } of queue) {
+        try {
+            const info = await fetchTooltip(id);
+            if (info.delay !== null || info.dest) { tooltipCache.set(id, { at: Date.now(), ...info }); ok++; }
+        } catch { /* zkusíme v dalším kole */ }
+    }
+    return ok;
+}
+
+function withTooltips(features) {
+    const now = Date.now();
+    return features.map(f => {
+        const info = tooltipCache.get(f.id);
+        const fresh = info && now - info.at < TOOLTIP_MAX_AGE_MS;
+        return { ...f, delay: fresh ? info.delay : null, dest: fresh ? info.dest : null };
+    });
+}
 
 async function main() {
     log('DPKV relay startuje');
@@ -136,7 +200,10 @@ async function main() {
                 log(`porovnání dotazů: ${JSON.stringify(lastCompare)}`);
             }
             const { rt, bytes } = await getFeatures(useFull ? [RT_LAYER, ...lineLayers] : [RT_LAYER]);
-            await push(rt, { round, vehicles: rt.length, kb: Math.round(bytes / 1024), useFull, lineLayers, lastCompare, errors, version: 1 });
+            const tooltipsOk = await refreshTooltips(rt);
+            const withDelay = withTooltips(rt);
+            const known = withDelay.filter(f => f.delay !== null).length;
+            await push(withDelay, { round, vehicles: rt.length, delayKnown: known, tooltipsOk, kb: Math.round(bytes / 1024), useFull, lineLayers, lastCompare, errors, version: 2 });
             if (round % 30 === 0) log(`ok: ${rt.length} vozů, ${Math.round(bytes / 1024)} kB`);
             errors = 0;
         } catch (error) {

@@ -1353,7 +1353,8 @@ app.get('/dpkv', positionRoute('/dpkv', async () => {
         if (!vehicle.fullLine) return;
         const info = await tripInfo(vehicle.fullLine, vehicle.run, vehicle.lat, vehicle.lng).catch(() => null);
         if (info) {
-            vehicle.destination = info.destination;
+            // cíl z jízdního řádu (shoduje se s ním jízdní řád v detailu), portál jako záloha
+            vehicle.destination = info.destination || vehicle.destination;
             vehicle.stopIndex = info.stopIndex;
             vehicle.stop = info.stop;
             vehicle.stopMatched = true;
