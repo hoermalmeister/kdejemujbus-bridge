@@ -9,8 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: node probe/multi.mjs
+      - run: |
+          H=dopravniportal.dpkv.cz
+          echo "PG DNS A: $(dig +short A $H | tr '\n' ' ') AAAA: $(dig +short AAAA $H | tr '\n' ' ')"
+          echo "PG runner IP: $(curl -s --max-time 10 https://api.ipify.org) $(curl -s --max-time 10 https://ipinfo.io/country)"
+          for opt in "-4 https://$H/dic/" "-6 https://$H/dic/" "-4 http://$H/dic/" "-4 https://www.dpkv.cz/" "-4 https://dpkv.cz/"; do
+            r=$(curl -s -o /dev/null -w '%{http_code} connect=%{time_connect}s total=%{time_total}s' --connect-timeout 10 --max-time 20 $opt 2>&1); echo "PG curl $opt -> $r (exit $?)"
+          done
+          for ip in $(dig +short A $H); do timeout 8 bash -c "echo > /dev/tcp/$ip/443" && echo "PG tcp $ip:443 open" || echo "PG tcp $ip:443 closed/filtered"; timeout 8 bash -c "echo > /dev/tcp/$ip/80" && echo "PG tcp $ip:80 open" || echo "PG tcp $ip:80 closed/filtered"; done
+          echo "PG whois: $(whois $(dig +short A $H | head -1) 2>/dev/null | grep -iE '^(netname|descr|country|org-name)' | head -5 | tr '\n' ' ')"
