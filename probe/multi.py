@@ -10,8 +10,7 @@ try:
 except Exception as e:
     log('ARRIVA ERROR', repr(e)[:300])
 want = ('2256', '580916', '157710', '721341')
-data = urllib.request.urlopen('https://motis.obehy.cz/get-feeds/cz-jdf-gtfs.zip', timeout=300).read()
-z = zipfile.ZipFile(io.BytesIO(data))
+z = zipfile.ZipFile('feed.zip')
 def rows(n): return csv.DictReader(io.TextIOWrapper(z.open(n), encoding='utf-8-sig'))
 routes = {r['route_id']: r for r in rows('routes.txt') if r['route_short_name'].startswith(want)}
 log('ROUTES', sorted((r['route_short_name'], r.get('route_long_name','')[:40]) for r in routes.values()))
