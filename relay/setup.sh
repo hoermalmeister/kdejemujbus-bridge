@@ -6,9 +6,10 @@ KEY="$1"
 if [ -z "$KEY" ]; then echo "Chybí klíč: ... | bash -s KLÍČ"; exit 1; fi
 BASE="https://raw.githubusercontent.com/hoermalmeister/kdejemujbus-bridge/main/relay"
 
+echo "== Aktualizuji Termux (celý systém, jinak se rozejdou verze curl a OpenSSL) =="
+yes | pkg upgrade -y -o Dpkg::Options::=--force-confnew
 echo "== Instaluji Node.js =="
-yes | pkg update -y >/dev/null 2>&1 || true
-pkg install -y nodejs-lts curl >/dev/null 2>&1 || pkg install -y nodejs curl
+pkg install -y nodejs-lts curl || pkg install -y nodejs curl
 
 echo "== Stahuji skript =="
 mkdir -p "$HOME/dpkv"
