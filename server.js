@@ -958,6 +958,32 @@ function readMpvTrip(req) {
     return num1 && num2 && cat !== undefined ? { num1: String(num1), num2: String(num2), cat: String(cat) } : null;
 }
 
+// Dopočet spojů z polohy nesmí zdržet polohy: když se párovací data teprve stahují (první
+// dotaz, obnova po 6 h), vrátíme vozy bez spoje a dopočet doběhne pro příští aktualizaci
+const MATCH_BUDGET_MS = 3000;
+function withinBudget(tasks) {
+    return Promise.race([Promise.all(tasks), new Promise((resolve) => setTimeout(resolve, MATCH_BUDGET_MS))]);
+}
+
+// DPO (MHD Ostrava) má v ODISu krátké číslo linky a vlastní číslo spoje, které není spojem
+// CIS JŘ. Šestimístná linka je 915 + číslo, spoj dopočteme z polohy, času, zpoždění,
+// příští/poslední a cílové zastávky. cn: 0 linka, 2 spoj, 3 poslední, 5 příští, 9 cíl.
+async function addDpoRuns(vehicles) {
+    await withinBudget(vehicles.map(async (vehicle) => {
+        if (vehicle.external || String(vehicle.cr || '').replace(/<[^>]*>/g, '').trim() !== 'DPO') return;
+        const fields = String(vehicle.cn || '').split('|');
+        if (!/^\d{1,3}$/.test(fields[0] || '')) return;
+        const cisLine = '915' + fields[0].padStart(3, '0');
+        vehicle.cisLine = cisLine;
+        const match = await matchDpmlb(cisLine, vehicle.x, vehicle.y, vehicle.dm || 0, {
+            lastName: fields[3] || fields[5],
+            finalName: fields[9]
+        }).catch(() => null);
+        if (match) vehicle.cisRun = match.run;
+    }));
+    return vehicles;
+}
+
 for (const portal of MPV_PORTALS) {
     app.get(`/mpv/${portal}`, positionRoute(`/mpv/${portal}`, async () => {
         const response = await postMpv(portal, 'map/mapData', MPV_BOUNDS);
@@ -971,6 +997,7 @@ for (const portal of MPV_PORTALS) {
         const external = (data.external || [])
             .filter(v => String(v.extrads || '').includes('|'))
             .map(({ x, y, ico, dm, cr, extrads, cat }) => ({ x, y, ico, dm, cr, cat, cn: extrads, external: true }));
+        if (portal === 'odis') await addDpoRuns(own);
         return [...own, ...external];
     }));
 
@@ -1236,7 +1263,7 @@ app.get('/dszo', positionRoute('/dszo', async () => {
     }
     // Číslo spoje IDZK není číslo spoje CIS JŘ, proto spoj dopočteme z polohy, času, zpoždění
     // a názvů poslední a cílové zastávky. Linky 825xxx, jen 55, 56, 57 a 93 jsou 826xxx.
-    await Promise.all(vehicles.map(async (vehicle) => {
+    await withinBudget(vehicles.map(async (vehicle) => {
         const number = String(vehicle.line || '');
         if (!/^\d{1,3}$/.test(number)) return;
         vehicle.fullLine = (['55', '56', '57', '93'].includes(number) ? '826' : '825') + number.padStart(3, '0');
@@ -1275,7 +1302,7 @@ app.get('/mdt', positionRoute('/mdt', createPortaboVehicles('585', calculateBear
 // proto ho dopočteme z polohy, času, zpoždění a názvů poslední a cílové zastávky
 app.get('/dpmhk', positionRoute('/dpmhk', async () => {
     const vehicles = await getDpmhkVehicles();
-    await Promise.all(vehicles.map(async (vehicle) => {
+    await withinBudget(vehicles.map(async (vehicle) => {
         const number = String(vehicle.line || '');
         if (!/^\d{1,3}$/.test(number)) return;   // přejezdy ("-") a neznámé linky
         vehicle.fullLine = '615' + number.padStart(3, '0');

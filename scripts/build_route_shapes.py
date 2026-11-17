@@ -32,8 +32,8 @@ TIMETABLE_LINE_PREFIXES = ('6050', '2651', '595', '585', '765', '2256', '4250') 
 # DSZO (Zlín-Otrokovice): 825xxx, linky 55, 56, 57 a 93 mají 826xxx
 DSZO_LINES = ('825', '826055', '826056', '826057', '826093')
 # Linky, pro které navíc ukládáme data k dopočtu spoje z polohy a času
-# (DPMLB, DPMÚL, DPMJ, Arriva, DPKV, DPMHK 615xxx, DSZO)
-MATCH_LINE_PREFIXES = ('2651', '595', '765', '2256', '4250', '615') + DSZO_LINES + ARRIVA_EXPRESS_LINES + SCHEDULED_LINES
+# (DPMLB, DPMÚL, DPMJ, Arriva, DPKV, DPMHK 615xxx, DSZO, DPO 915xxx)
+MATCH_LINE_PREFIXES = ('2651', '595', '765', '2256', '4250', '615', '915') + DSZO_LINES + ARRIVA_EXPRESS_LINES + SCHEDULED_LINES
 # Oblast IDS JMK: linky se zastávkou v tomto obdélníku dostanou překlad krátké číslo -> šestimístná linka
 JMK_BBOX = (48.55, 49.65, 15.5, 17.7)   # lat min, lat max, lon min, lon max
 
