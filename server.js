@@ -17,6 +17,7 @@ import { getGepardVehicles } from './lib/gepardApi.js';
 import { getDpmjVehicles } from './lib/dpmjApi.js';
 import { getArrivaVehicles } from './lib/arrivaApi.js';
 import { matchDpmlb, scheduledVehicles, tripInfo } from './lib/dpmlbMatch.js';
+import { getJmkLineResolver } from './lib/jmkLines.js';
 import { checkKey, acceptPush, getPushedVehicles, pushStatus } from './lib/dpkvPush.js';
 
 // Zaseknutý zdroj nesmí držet klienta ani paměť donekonečna
@@ -491,13 +492,21 @@ async function fetchJmkApi(url) {
 
 // --- 9A. ENDPOINT PRO IDS JMK (Základní polohy) ---
 app.get('/idsjmk', positionRoute('/idsjmk', async () => {
-        const data = await fetchJmkApi('https://mapa.idsjmk.cz/api/vehicles');
-        
+        const [data, resolveLine] = await Promise.all([
+            fetchJmkApi('https://mapa.idsjmk.cz/api/vehicles'),
+            getJmkLineResolver().catch(() => () => null)
+        ]);
+
         if (data && data.Vehicles) {
             data.Vehicles.forEach(v => {
                 if (v.LastStopID) {
                     const name = manualStops[v.LastStopID] || jmkStops[v.LastStopID];
                     if (name) v.LastStopName = name;
+                }
+                // Šestimístná linka CIS JŘ (RouteID je číslo spoje); vlaky necháváme GRAPPu
+                if (v.VType !== 5) {
+                    const fullLine = resolveLine(v.LineName, v.RouteID);
+                    if (fullLine) v.FullLine = fullLine;
                 }
             });
         }
@@ -1225,6 +1234,22 @@ app.get('/dszo', positionRoute('/dszo', async () => {
         const trip = byVehicle.get(String(vehicle.vehicle));
         if (trip) { vehicle.idzk = trip; vehicle.spoj = trip.run; }
     }
+    // Číslo spoje IDZK není číslo spoje CIS JŘ, proto spoj dopočteme z polohy, času, zpoždění
+    // a názvů poslední a cílové zastávky. Linky 825xxx, jen 55, 56, 57 a 93 jsou 826xxx.
+    await Promise.all(vehicles.map(async (vehicle) => {
+        const number = String(vehicle.line || '');
+        if (!/^\d{1,3}$/.test(number)) return;
+        vehicle.fullLine = (['55', '56', '57', '93'].includes(number) ? '826' : '825') + number.padStart(3, '0');
+        const match = await matchDpmlb(vehicle.fullLine, vehicle.lat, vehicle.lng, vehicle.delay || 0, {
+            lastName: vehicle.stop,
+            finalName: vehicle.destination
+        }).catch(() => null);
+        if (match) {
+            vehicle.run = match.run;
+            vehicle.stopIndex = match.stopIndex;
+            vehicle.stopMatched = match.stopMatched;
+        }
+    }));
     return vehicles;
 }));
 
@@ -1246,7 +1271,22 @@ app.get('/dpmul', positionRoute('/dpmul', createPortaboVehicles('595', calculate
 app.get('/mdt', positionRoute('/mdt', createPortaboVehicles('585', calculateBearing)));
 
 // --- 32. DPMHK (Hradec Králové, qrbus) ---
-app.get('/dpmhk', positionRoute('/dpmhk', getDpmhkVehicles));
+// Šestimístná linka je 615 + číslo linky; číslo spoje zdroj nemá (tn je interní číslo),
+// proto ho dopočteme z polohy, času, zpoždění a názvů poslední a cílové zastávky
+app.get('/dpmhk', positionRoute('/dpmhk', async () => {
+    const vehicles = await getDpmhkVehicles();
+    await Promise.all(vehicles.map(async (vehicle) => {
+        const number = String(vehicle.line || '');
+        if (!/^\d{1,3}$/.test(number)) return;   // přejezdy ("-") a neznámé linky
+        vehicle.fullLine = '615' + number.padStart(3, '0');
+        const match = await matchDpmlb(vehicle.fullLine, vehicle.lat, vehicle.lng, vehicle.delay || 0, {
+            lastName: vehicle.stop,
+            finalName: vehicle.destination
+        }).catch(() => null);
+        if (match) vehicle.run = match.run;
+    }));
+    return vehicles;
+}));
 
 app.get('/dpmhk/route', async (req, res) => {
     try {

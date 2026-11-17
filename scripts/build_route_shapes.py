@@ -29,8 +29,13 @@ ARRIVA_EXPRESS_LINES = ('157710', '580916', '721341')
 # (MHD Ústí nad Orlicí, Jičín, Tachov, Špindlerův Mlýn)
 SCHEDULED_LINES = ('705100', '635007', '495712', '696002')
 TIMETABLE_LINE_PREFIXES = ('6050', '2651', '595', '585', '765', '2256', '4250') + ARRIVA_EXPRESS_LINES + SCHEDULED_LINES
-# Linky, pro které navíc ukládáme data k dopočtu spoje z polohy a času (DPMLB, DPMÚL, DPMJ, Arriva, DPKV)
-MATCH_LINE_PREFIXES = ('2651', '595', '765', '2256', '4250') + ARRIVA_EXPRESS_LINES + SCHEDULED_LINES
+# DSZO (Zlín-Otrokovice): 825xxx, linky 55, 56, 57 a 93 mají 826xxx
+DSZO_LINES = ('825', '826055', '826056', '826057', '826093')
+# Linky, pro které navíc ukládáme data k dopočtu spoje z polohy a času
+# (DPMLB, DPMÚL, DPMJ, Arriva, DPKV, DPMHK 615xxx, DSZO)
+MATCH_LINE_PREFIXES = ('2651', '595', '765', '2256', '4250', '615') + DSZO_LINES + ARRIVA_EXPRESS_LINES + SCHEDULED_LINES
+# Oblast IDS JMK: linky se zastávkou v tomto obdélníku dostanou překlad krátké číslo -> šestimístná linka
+JMK_BBOX = (48.55, 49.65, 15.5, 17.7)   # lat min, lat max, lon min, lon max
 
 
 def rows(archive, name):
@@ -132,18 +137,31 @@ def seconds(text):
     return int(h) * 3600 + int(m) * 60 + int(s)
 
 
-def write_realtime(archive, timetable_trips, match_trips, match_head, match_mask, base, out_dir):
+def in_jmk(coord):
+    try:
+        lat, lon = float(coord[0]), float(coord[1])
+    except (TypeError, ValueError):
+        return False
+    return JMK_BBOX[0] <= lat <= JMK_BBOX[1] and JMK_BBOX[2] <= lon <= JMK_BBOX[3]
+
+
+def write_realtime(archive, timetable_trips, match_trips, match_head, match_mask, base, out_dir, trip_lines):
     """Jedním průchodem stop_times.txt vytvoří jízdní řády i párovací data.
-    timetable_trips: trip_id -> (linka, spoj); match_trips: trip_id -> (linka, spoj)."""
+    timetable_trips: trip_id -> (linka, spoj); match_trips: trip_id -> (linka, spoj).
+    trip_lines: trip_id -> linka pro všechny spoje v okně; vrací množinu linek se zastávkou v oblasti IDS JMK."""
     wanted = set(timetable_trips) | set(match_trips)
-    if not wanted:
-        return
     names, coords = {}, {}
     for row in rows(archive, 'stops.txt'):
         names[row['stop_id']] = row['stop_name']
         coords[row['stop_id']] = (row['stop_lat'], row['stop_lon'])
+    jmk_stops = {sid for sid, coord in coords.items() if in_jmk(coord)}
+    jmk_lines = set()
     stops = defaultdict(list)
     for row in rows(archive, 'stop_times.txt'):
+        if row['stop_id'] in jmk_stops:
+            line = trip_lines.get(row['trip_id'])
+            if line:
+                jmk_lines.add(line)
         if row['trip_id'] in wanted:
             stops[row['trip_id']].append((
                 int(row['stop_sequence']),
@@ -185,6 +203,32 @@ def write_realtime(archive, timetable_trips, match_trips, match_head, match_mask
             with open(os.path.join(match_dir, f'{line}.json'), 'w', encoding='utf-8') as handle:
                 json.dump(payload, handle, ensure_ascii=False, separators=(',', ':'))
         print(f'Párovacích linek: {len(by_line)}', flush=True)
+    return jmk_lines
+
+
+def write_jmk_index(lines, short_names, jmk_lines, base, out_dir):
+    """match/jmk_lines.json: {"base", "lines": {"<krátké číslo>": {"<linka>": {"<spoj>": maska_dnů}}}}
+    – IDS JMK posílá jen krátké číslo linky (a číslo spoje), šestimístnou linku dohledá můstek."""
+    index = defaultdict(dict)
+    for line in sorted(jmk_lines):
+        short = short_names.get(line, '').strip()
+        if not short or line not in lines:
+            continue
+        runs = {}
+        for run, variants in lines[line].items():
+            mask = 0
+            for variant_mask in variants.values():
+                mask |= variant_mask
+            if mask:
+                runs[run] = mask
+        if runs:
+            index[short][line] = runs
+    match_dir = os.path.join(out_dir, 'match')
+    os.makedirs(match_dir, exist_ok=True)
+    payload = json.dumps({'base': base.strftime('%Y%m%d'), 'lines': index}, separators=(',', ':'))
+    with open(os.path.join(match_dir, 'jmk_lines.json'), 'w', encoding='utf-8') as handle:
+        handle.write(payload)
+    print(f'IDS JMK: {len(jmk_lines)} linek, {len(index)} krátkých čísel, {len(payload) / 1e6:.2f} MB', flush=True)
 
 
 def main(feed_path, out_dir):
@@ -200,6 +244,9 @@ def main(feed_path, out_dir):
         match_head = {}
         match_seen = set()
         match_mask = defaultdict(int)
+        trip_lines = {}
+        route_short = {row['route_id']: row.get('route_short_name', '') for row in rows(archive, 'routes.txt')}
+        short_names = {}
         total = 0
         for row in rows(archive, 'trips.txt'):
             total += 1
@@ -208,6 +255,8 @@ def main(feed_path, out_dir):
             if not mask or len(parts) != 2 or not row['shape_id']:
                 continue
             line, run = parts
+            trip_lines[row['trip_id']] = line
+            short_names.setdefault(line, route_short.get(row['route_id'], ''))
             variants = lines[line][run]
             variants[row['shape_id']] = variants.get(row['shape_id'], 0) | mask
             wanted.add(row['shape_id'])
@@ -223,7 +272,9 @@ def main(feed_path, out_dir):
         print(f'Spojů celkem: {total}, linek v okně: {len(lines)}, tvarů: {len(wanted)}', flush=True)
 
         shapes = read_shapes(archive, wanted)
-        write_realtime(archive, timetable_trips, match_trips, match_head, match_mask, base, out_dir)
+        jmk_lines = write_realtime(archive, timetable_trips, match_trips, match_head, match_mask, base, out_dir, trip_lines)
+        del trip_lines
+        write_jmk_index(lines, short_names, jmk_lines, base, out_dir)
 
     routes_dir = os.path.join(out_dir, 'routes')
     os.makedirs(routes_dir, exist_ok=True)
